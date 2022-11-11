@@ -110,7 +110,7 @@ respectively. The values are the mapping functions.
 The package defines the default mapper instance `DefaultMapper` that can be used to map values. The functions `Map`
 and `MapRefl`are wrappers around the `DefaultMapper.Map` and `DefaultMapper.MapRefl` methods. It is possible to
 change configuration of the default mapper but it may affect other packages that use the default mapper. To avoid
-this, it is possible to create a copy of the default mapper using the `DefaultMapper.Copy` method.
+this, it is recommended to create a copy of the default mapper using the `DefaultMapper.Copy` method.
 
 ## Examples
 
