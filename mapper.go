@@ -10,13 +10,6 @@ import (
 	"strings"
 )
 
-// MapFrom interface is implemented by types that can set their value from
-// another type.
-type MapFrom interface {
-	// MapFrom sets the receiver value from the source value.
-	MapFrom(m *Mapper, src reflect.Value) error
-}
-
 // MapInto interface is implemented by types that can map themselves to
 // another type.
 type MapInto interface {
@@ -24,6 +17,19 @@ type MapInto interface {
 	MapInto(m *Mapper, dest reflect.Value) error
 }
 
+// MapFrom interface is implemented by types that can set their value from
+// another type.
+type MapFrom interface {
+	// MapFrom sets the receiver value from the source value.
+	MapFrom(m *Mapper, src reflect.Value) error
+}
+
+// DefaultMapper is the default Mapper used by the Map and MapRefl functions.
+// It is configured to use the "map" struct tag, the "." separator. It also
+// provides additional mapping rules for time.Time, big.Int and big.Float.
+// It can be modified to change the default behavior, but if the mapper is
+// used by other packages, it is recommended to create a copy of the default
+// mapper and modify the copy.
 var DefaultMapper = &Mapper{
 	Tag:       `map`,
 	Separator: `.`,
@@ -40,121 +46,20 @@ var DefaultMapper = &Mapper{
 }
 
 // MapFunc is a function that maps a src value to a dest value. It returns an
-// error if the mapping is not possible.
+// error if the mapping is not possible. The src and dest values are never
+// pointers.
 type MapFunc func(m *Mapper, src, dest reflect.Value) error
 
-// Mapper maps the source value to the destination value.
-//
-// The mapping rules are as follows:
-//
-// - If the dest value is an empty interface, the src value is assigned to it.
-// - bool -> bool: copy the value.
-// - bool -> intX, uintX, floatX: 0 if false, 1 if true.
-// - bool -> string: "true" if true, "false" if false.
-// - uintX, intX, floatX -> bool: false if 0, true otherwise.
-// - uintX, intX, floatX -> intX, uintX, floatX: set the number if not overflow (floats are rounded down)
-// - uintX, intX, floatX -> string: convert to 10-base string.
-// - uintX, intX -> []byte: convert to big-endian byte slice.
-// - uintX, intX -> [X]byte: convert to big-endian byte array if not overflow
-// - string -> string: copy the value.
-// - string -> bool: "true" if true, "false" if false.
-// - string -> intX, uintX, floatX: parse the string using SetString from big.Int or big.Float.
-// - string -> []byte: convert to byte slice.
-// - string -> [X]byte: convert to byte array if length of the string is the same as the length of the array
-// - []byte -> uintX, intX: convert from big-endian byte slice.
-// - []byte -> string: convert to string.
-// - slice -> slice: recursively map each slice element.
-// - slice -> array: recursively map each slice element if lengths are the same.
-// - array -> slice: recursively map each array element.
-// - array -> array: recursively map each array element if lengths are the same.
-// - map -> map: recursively map each key and value.
-// - map[string][X] -> struct: recursively map each map element to the struct field.
-// - struct -> struct: recursively map each struct field.
-// - struct -> map[string][X]: recursively map each struct field to the map element.
-//
-// Additional rules defined in DefaultMapper:
-//
-// - time.Time -> time.Time: copy the value.
-// - time.Time -> string: format the time using time.RFC3339.
-// - time.Time -> uint, uint32, uint64, int, int32, int64: convert to unix timestamp.
-// - time.Time -> uint8, uint16, int8, int16: not allowed.
-// - time.Time -> float32, float64: convert to unix timestamp, preserving the fractional part.
-// - time.Time -> big.Int: convert to unix timestamp.
-// - time.Time -> big.Float: convert to unix timestamp, preserving the fractional part.
-// - big.Int -> big.Int: copy the value.
-// - big.Int -> bool: false if 0, true otherwise.
-// - big.Int -> intX, uintX, floatX: convert to intX, uintX, floatX if not overflow (floats are rounded down)
-// - big.Int -> string: convert to 10-base string.
-// - big.Int -> []byte: convert to big-endian byte slice.
-// - big.Int -> [X]byte: convert to big-endian byte array if not overflow.
-// - big.Int -> time.Time: use value as unix timestamp.
-// - big.Int -> big.Float: convert to big.Float.
-// - big.Float -> big.Float: copy the value.
-// - big.Float -> bool: false if 0, true otherwise.
-// - big.Float -> intX, uintX, floatX: set the number if not overflow.
-// - big.Float -> string: convert to 10-base string.
-// - big.Float -> []byte: convert to big-endian byte slice.
-// - big.Float -> [X]byte: convert to big-endian byte array if not overflow.
-// - big.Float -> time.Time: use value as unix timestamp (fractional part is preserved).
-// - big.Float -> big.Int: convert to big.Int.
-//
-// Mapping structures:
-//
-// Structures are treated as maps with field names as keys. Field names can be
-// overridden with a tag (whose name is defined in Mapper.Tag, default is "map").
-// The tag can contain a list of field names separated by Mapper.Separator
-// (default is dot). In this case, the field will be treated as a nested field.
-// For example, the following struct:
-//
-//     type Foo struct {
-//         Bar string `map:"a.b"`
-//     }
-//
-// will be treated as the following map:
-//
-//     map[string]any{"a": map[string]any{"b": "bar"}}.
-//
-// If the Mapper.FieldMapper function is set and tag is not set, the field name
-// is mapped using the FieldMapper function.
-//
-// As a special case, if the field tag is "-", the field is always omitted.
-//
-// Strict types:
-//
-// It is possible to enforce strict type checking by setting Mapper.StrictTypes
-// to true. If enabled, the source and destination types must be exactly the
-// same for the mapping to be possible. Although, mapping between different
-// data structures, like struct<->struct, struct<->map and map<->map is always
-// possible. If the destination type is an empty interface, the source value
-// will be assigned to it regardless of the value of StrictTypes.
-//
-// MapFrom and MapInto interfaces:
-//
-// If the destination value implements MapFrom interface, the MapFrom method
-// will be used to map the source value to the destination value.
-//
-// If the source type implements MapInto interface, the MapInto method will be
-// used to map the source value to the destination value.
-//
-// If both source and destination values implement the MapInto and MapFrom
-// interfaces then MapFrom will be used first, if it returns an error then
-// MapInto.
-//
-// Mapper.MapFrom and Mapper.MapInto maps:
-//
-// If it is not possible to implement the above interfaces, it is possible to
-// define a custom mapping using Mapper.MapFrom and Mapper.MapInto maps. Those
-// maps take a source type or a destination type respectively as a key and a
-// mapping function as a value.
+// Mapper hold the mapper configuration.
 type Mapper struct {
 	// StrictTypes enabled strict type checking.
 	StrictTypes bool
 
 	// Tag is the name of the struct tag that is used by the mapper to
-	// determine the name of the field to map to. This field cannot be empty.
+	// determine the name of the field to map to.
 	Tag string
 
-	// Separator is the symbol that is used to separate struct fields in the
+	// Separator is the symbol that is used to separate fields in the
 	// struct tag.
 	Separator string
 
@@ -162,11 +67,11 @@ type Mapper struct {
 	// it is used only when the tag is not present.
 	FieldMapper func(string) string
 
-	// MapFrom is a map of types that can map themselves from another type.
-	MapFrom map[reflect.Type]MapFunc
-
 	// MapInto is a map of types that can map themselves to another type.
 	MapInto map[reflect.Type]MapFunc
+
+	// MapFrom is a map of types that can map themselves from another type.
+	MapFrom map[reflect.Type]MapFunc
 }
 
 // Map maps the source value to the destination value.
@@ -255,22 +160,22 @@ func (m *Mapper) Copy() *Mapper {
 // If no mapping function succeeds, it returns an error from the last mapping
 // function that was tried.
 func (m *Mapper) mapFunc(src, dest reflect.Value) (ok bool, err error) {
-	if dest.Type().Implements(mapFromTy) {
-		if err = dest.Interface().(MapFrom).MapFrom(m, src); err == nil {
-			return true, nil
-		}
-	}
 	if src.Type().Implements(mapIntoTy) {
 		if err = src.Interface().(MapInto).MapInto(m, dest); err == nil {
 			return true, nil
 		}
 	}
-	if f, ok := m.MapFrom[src.Type()]; ok {
-		if err = f(m, src, dest); err == nil {
+	if dest.Type().Implements(mapFromTy) {
+		if err = dest.Interface().(MapFrom).MapFrom(m, src); err == nil {
 			return true, nil
 		}
 	}
 	if f, ok := m.MapInto[dest.Type()]; ok {
+		if err = f(m, src, dest); err == nil {
+			return true, nil
+		}
+	}
+	if f, ok := m.MapFrom[src.Type()]; ok {
 		if err = f(m, src, dest); err == nil {
 			return true, nil
 		}
@@ -649,6 +554,10 @@ func (m *Mapper) mapMap(src, dest reflect.Value) error {
 func (m *Mapper) mapStruct(src, dest reflect.Value) error {
 	switch dest.Kind() {
 	case reflect.Struct:
+		if src.Type() == dest.Type() {
+			dest.Set(src)
+			return nil
+		}
 		return m.MapRefl(m.structToPtrsMap(src, false), m.structToPtrsMap(dest, true))
 	case reflect.Map:
 		if dest.Type().Key().Kind() != reflect.String {
