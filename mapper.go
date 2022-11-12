@@ -189,7 +189,7 @@ func (m *Mapper) mapFunc(src, dest reflect.Value) (ok bool, err error) {
 }
 
 func (m *Mapper) mapBool(src, dest reflect.Value) error {
-	if m.StrictTypes && dest.Kind() != reflect.Bool {
+	if m.StrictTypes && src.Type() != dest.Type() {
 		return NewInvalidMappingError(src.Type(), dest.Type(), "strict mode")
 	}
 	switch dest.Kind() {
@@ -375,7 +375,7 @@ func (m *Mapper) mapFloat(src, dest reflect.Value) error {
 }
 
 func (m *Mapper) mapString(src, dest reflect.Value) error {
-	if m.StrictTypes && dest.Kind() != reflect.String {
+	if m.StrictTypes && src.Type() != dest.Type() {
 		return NewInvalidMappingError(src.Type(), dest.Type(), "strict mode")
 	}
 	switch dest.Kind() {

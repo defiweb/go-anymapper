@@ -16,8 +16,8 @@ the destination. The function will try to map the source to the destination. If 
 types, the function will try to convert types using to following rules:
 
 - If the dest value is an empty interface, the src value is assigned to it.
-- `bool` ⇔ `intX`, `uintX`, `floatX` ⇒ `true` ⇔ `1`, `false` ⇔ `0`
-- `intX`, `uintX`, `floatX` ⇔ `intX`, `uintX`, `floatX` ⇒ cast numbers to the destination type if not overflow
+- `bool` ⇔ `intX`, `uintX`, `floatX` ⇒ `true` ⇔ `1`, `false` ⇔ `0` (if source is number, then `≠0` ⇒ `true`).
+- `intX`, `uintX`, `floatX` ⇔ `intX`, `uintX`, `floatX` ⇒ cast numbers to the destination type if not overflow.
 - `string` ⇔ `intX`, `uintX` ⇒ converts string to or from number using `big.Int.SetString` and `big.Int.String`.
 - `string` ⇔ `floatX` ⇒ converts string to or from number using `big.Float.SetString` and `big.Float.String`.
 - `string` ⇔ `[]byte` ⇒ converts string to or from byte array using `[]byte(s)` and `string(b)`.
@@ -33,6 +33,8 @@ Please note, that mapping may fail if the destination type it not large enough t
 mapping `int64` to `int8` may fail because `int64` can hold values larger than `int8`. This is also true for mapping
 numbers to byte slices or arrays.
 
+The above types refers to type kind, not to the actual type, hence `type MyInt int` is considered to be `int` as well.
+
 In addition to the above rules, the default configuration of the mapper supports the following conversions:
 
 - `time.Time` ⇔ `string` ⇒ converts string to or from time using RFC3339 format.
@@ -41,12 +43,12 @@ In addition to the above rules, the default configuration of the mapper supports
 - `time.Time` ⇔  `floatX` ⇒ convert to or from unix timestamp, preserving the fractional part of a second.
 - `time.Time` ⇔  `big.Int` ⇒ convert to or from unix timestamp
 - `time.Time` ⇔  `big.Float` ⇒ convert to or from unix timestamp, preserving the fractional part of a second.
-- `time.Time` ⇔  `X` -> if none of the above rules apply, `time.Time` will be treated as `int64`.
+- `time.Time` ⇔  `X` ⇒ if none of the above rules apply, `time.Time` will be treated as `int64`.
 - `big.Int` ⇔ `intX`, `uintX`, `floatX` ⇒ converts big integer to or from number if not overflow.
 - `big.Int` ⇔ `string` ⇒ converts to or from string using `big.Int.String` and `big.Int.SetString`.
 - `big.Int` ⇔ `[]byte` ⇒ converts to or from byte array using `big.Int.Bytes` and `big.Int.SetBytes`.
 - `big.Int` ⇔ `[X]byte` ⇒ converts to or from byte array using `big.Int.Bytes` and `big.Int.SetBytes` if not overflow.
-- `big.Int` ⇔ `big.Float` ⇒ converts to or from big float.
+- `big.Int` ⇔ `big.Float` ⇒ coverts number to the destination type (float numbers are rounded down).
 - `big.Float` ⇔ `intX`, `uintX`, `floatX` ⇒ converts big float to or from number if not overflow.
 - `big.Float` ⇔ `string` ⇒ converts to or from string using `big.Float.String` and `big.Float.SetString`.
 
@@ -68,7 +70,7 @@ type Foo struct {
 will be treated as the following map:
 
 ```
-    map[string]any{"a": map[string]any{"b": "bar"}}
+map[string]any{"a": map[string]any{"b": "bar"}}
 ```
 
 As a special case, if the field tag is "-", the field is always omitted.
@@ -85,6 +87,8 @@ destination types must be exactly the same for the mapping to be possible. Altho
 structures, like `struct` ⇔ `struct`, `struct` ⇔ `map` and `map` ⇔ `map` is always possible. If the destination type is
 an empty interface, the source value will be assigned to it regardless of the value of `Mapper.StrictTypes`.
 
+The strict type check also applies to custom types, for example, `type MyInt int` will not be treated as `int` anymore.
+
 ### `MapInto` and `MapFrom` interfaces:
 
 The `go-anymapper` package provides two interfaces that can be implemented by the source and destination types to
@@ -97,12 +101,12 @@ If the destination value implements `MapFrom` interface, the `MapFrom` method wi
 the destination value.
 
 If both source and destination values implement the `MapInto` and `MapFrom` interfaces then `MapInto` will be used
-first, if it returns an error then `MapInto`.
+first, if it returns an error then `MapFrom`.
 
 ### `Mapper.MapInro` and `Mapper.MapFrom` maps:
 
 If it is not possible to implement the above interfaces, the custom mapping functions can be registered with the
-`Mapper.MapInto` and `Mapper.MapFrom` maps. The keys of these maps are the types of the source and destination values
+`Mapper.MapInto` and `Mapper.MapFrom` maps. The keys of these maps are the types of the destination and source values
 respectively. The values are the mapping functions.
 
 ### Default mapper instance

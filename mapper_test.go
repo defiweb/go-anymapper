@@ -829,6 +829,15 @@ func TestNilValues(t *testing.T) {
 }
 
 func TestStrictTypes(t *testing.T) {
+	type (
+		myBool   bool
+		myInt    int
+		myUint   uint
+		myFloat  float64
+		myString string
+		mySlice  []string
+		myArray  [1]string
+	)
 	m := DefaultMapper.Copy()
 	m.StrictTypes = true
 	t.Run("bool", func(t *testing.T) {
@@ -837,6 +846,7 @@ func TestStrictTypes(t *testing.T) {
 		require.Error(t, m.Map(true, new(uint)))
 		require.Error(t, m.Map(true, new(float64)))
 		require.Error(t, m.Map(true, new(string)))
+		require.Error(t, m.Map(true, new(myBool)))
 	})
 	t.Run("int", func(t *testing.T) {
 		require.Error(t, m.Map(1, new(bool)))
@@ -846,6 +856,7 @@ func TestStrictTypes(t *testing.T) {
 		require.Error(t, m.Map(1, new(string)))
 		require.Error(t, m.Map(1, make([]byte, 8)))
 		require.Error(t, m.Map(1, new([8]byte)))
+		require.Error(t, m.Map(1, new(myInt)))
 	})
 	t.Run("uint", func(t *testing.T) {
 		require.Error(t, m.Map(uint(1), new(bool)))
@@ -855,6 +866,7 @@ func TestStrictTypes(t *testing.T) {
 		require.Error(t, m.Map(uint(1), new(string)))
 		require.Error(t, m.Map(uint(1), make([]byte, 8)))
 		require.Error(t, m.Map(uint(1), new([8]byte)))
+		require.Error(t, m.Map(uint(1), new(myUint)))
 	})
 	t.Run("float", func(t *testing.T) {
 		require.Error(t, m.Map(1.0, new(bool)))
@@ -862,6 +874,7 @@ func TestStrictTypes(t *testing.T) {
 		require.Error(t, m.Map(1.0, new(uint)))
 		require.NoError(t, m.Map(1.0, new(float64)))
 		require.Error(t, m.Map(1.0, new(string)))
+		require.Error(t, m.Map(1.0, new(myFloat)))
 	})
 	t.Run("string", func(t *testing.T) {
 		require.Error(t, m.Map("true", new(bool)))
@@ -871,6 +884,7 @@ func TestStrictTypes(t *testing.T) {
 		require.NoError(t, m.Map("foo", new(string)))
 		require.Error(t, m.Map("foo", new([]byte)))
 		require.Error(t, m.Map("foo", new([3]byte)))
+		require.Error(t, m.Map("foo", new(myString)))
 	})
 	t.Run("slice", func(t *testing.T) {
 		require.Error(t, m.Map([]byte{0x01}, new(int)))
@@ -878,6 +892,7 @@ func TestStrictTypes(t *testing.T) {
 		require.NoError(t, m.Map([]string{"foo"}, new([]string)))
 		require.Error(t, m.Map([]int{1}, new([]string)))
 		require.Error(t, m.Map([]string{"foo"}, new([1]string)))
+		require.Error(t, m.Map([]string{"foo"}, new(mySlice)))
 	})
 	t.Run("array", func(t *testing.T) {
 		require.Error(t, m.Map([1]byte{0x01}, new(int)))
@@ -885,6 +900,7 @@ func TestStrictTypes(t *testing.T) {
 		require.NoError(t, m.Map([1]string{"foo"}, new([1]string)))
 		require.Error(t, m.Map([1]int{1}, new([]string)))
 		require.Error(t, m.Map([1]int{1}, new([1]string)))
+		require.Error(t, m.Map([1]string{"foo"}, new(myArray)))
 	})
 	t.Run("map", func(t *testing.T) {
 		require.NoError(t, m.Map(map[string]string{"foo": "bar"}, new(map[string]string)))
