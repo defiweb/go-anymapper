@@ -6,14 +6,13 @@ The `go-anymapper` package helps you map anything to anything! It can map data b
 ## Installation
 
 ```bash
-go get github.com/ethereum/go-anymapper
+go get github.com/defiweb/go-anymapper
 ```
 
 ## Usage
 
 The simplest way to use the `go-anymapper` package is to use the `Map` function. It takes two arguments: the source and
-the destination. The function will try to map the source to the destination. If the both arguments are of different
-types, the function will try to convert types using to following rules:
+the destination. The function will try to map the source to the destination using the following rules:
 
 - If the dest value is an empty interface, the src value is assigned to it.
 - `bool` ⇔ `intX`, `uintX`, `floatX` ⇒ `true` ⇔ `1`, `false` ⇔ `0` (if source is number, then `≠0` ⇒ `true`).
@@ -101,9 +100,9 @@ If the destination value implements `MapFrom` interface, the `MapFrom` method wi
 the destination value.
 
 If both source and destination values implement the `MapInto` and `MapFrom` interfaces then `MapInto` will be used
-first, if it returns an error then `MapFrom`.
+first, then `MapFrom` if the first one fails.
 
-### `Mapper.MapInro` and `Mapper.MapFrom` maps:
+### `Mapper.MapInto` and `Mapper.MapFrom` maps:
 
 If it is not possible to implement the above interfaces, the custom mapping functions can be registered with the
 `Mapper.MapInto` and `Mapper.MapFrom` maps. The keys of these maps are the types of the destination and source values
