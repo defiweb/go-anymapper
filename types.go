@@ -11,6 +11,7 @@ var (
 	timeTy     = reflect.TypeOf((*time.Time)(nil)).Elem()
 	bigIntTy   = reflect.TypeOf((*big.Int)(nil)).Elem()
 	bigFloatTy = reflect.TypeOf((*big.Float)(nil)).Elem()
+	bigRatTy   = reflect.TypeOf((*big.Rat)(nil)).Elem()
 )
 
 var mapTimeSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
@@ -19,6 +20,8 @@ var mapTimeSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 	}
 	srcVal := src.Interface().(time.Time)
 	switch dest.Kind() {
+	case reflect.Bool:
+		return NewInvalidMappingError(src.Type(), dest.Type(), "")
 	case reflect.String:
 		dest.SetString(srcVal.Format(time.RFC3339))
 		return nil
@@ -59,8 +62,7 @@ var mapTimeSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 			return nil
 		}
 	}
-	// If any of the above cases matched, try to map the time.Time to an
-	// int64 and then try to map that.
+	// Try to use int64 as an intermediate type.
 	if err := m.MapRefl(reflect.ValueOf(src.Interface().(time.Time).Unix()), dest); err != nil {
 		return NewInvalidMappingError(src.Type(), dest.Type(), "")
 	}
@@ -72,6 +74,8 @@ var mapTimeDest MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 		return NewInvalidMappingError(src.Type(), dest.Type(), "strict mode")
 	}
 	switch src.Kind() {
+	case reflect.Bool:
+		return NewInvalidMappingError(src.Type(), dest.Type(), "")
 	case reflect.String:
 		tm, err := time.Parse(time.RFC3339, src.String())
 		if err != nil {
@@ -108,8 +112,7 @@ var mapTimeDest MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 			return nil
 		}
 	}
-	// If any of the above cases matched, try to map source to an int64 and
-	// try to map that to the time.Time.
+	// Try to use int64 as an intermediate type.
 	var timestamp int64
 	if err := m.MapRefl(src, reflect.ValueOf(&timestamp)); err != nil {
 		return NewInvalidMappingError(src.Type(), dest.Type(), "")
@@ -129,24 +132,21 @@ var mapBigIntSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 		return nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		n := srcVal.Int64()
-		if dest.OverflowInt(n) {
+		if !srcVal.IsInt64() || dest.OverflowInt(n) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
 		dest.SetInt(n)
 		return nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if srcVal.Sign() < 0 {
-			return NewInvalidMappingError(src.Type(), dest.Type(), "negative value")
-		}
 		n := srcVal.Uint64()
-		if dest.OverflowUint(n) {
+		if !srcVal.IsUint64() || dest.OverflowUint(n) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
 		dest.SetUint(n)
 		return nil
 	case reflect.Float32, reflect.Float64:
-		n, _ := new(big.Float).SetInt(srcVal).Float64()
-		if dest.OverflowFloat(n) {
+		n, a := new(big.Float).SetInt(srcVal).Float64()
+		if dest.OverflowFloat(n) || (math.IsInf(n, 0) && (a == big.Below || a == big.Above)) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
 		dest.SetFloat(n)
@@ -157,17 +157,6 @@ var mapBigIntSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 	case reflect.Slice:
 		if dest.Type().Elem().Kind() == reflect.Uint8 {
 			dest.SetBytes(srcVal.Bytes())
-			return nil
-		}
-	case reflect.Array:
-		if dest.Type().Elem().Kind() == reflect.Uint8 {
-			b := srcVal.Bytes()
-			if len(b) > dest.Len() {
-				return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
-			}
-			for i := 0; i < len(b); i++ {
-				dest.Index(i).SetUint(uint64(b[i]))
-			}
 			return nil
 		}
 	case reflect.Struct:
@@ -217,15 +206,6 @@ var mapBigIntDest MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 			dest.Set(reflect.ValueOf(new(big.Int).SetBytes(src.Bytes())).Elem())
 			return nil
 		}
-	case reflect.Array:
-		if src.Type().Elem().Kind() == reflect.Uint8 {
-			b := make([]byte, src.Len())
-			for i := 0; i < src.Len(); i++ {
-				b[i] = byte(src.Index(i).Uint())
-			}
-			dest.Set(reflect.ValueOf(new(big.Int).SetBytes(b)).Elem())
-			return nil
-		}
 	case reflect.Struct:
 		switch src.Type() {
 		case bigIntTy:
@@ -248,7 +228,7 @@ var mapBigFloatSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 	srcVal := src.Addr().Interface().(*big.Float)
 	switch dest.Kind() {
 	case reflect.Bool:
-		dest.SetBool(srcVal.Cmp(big.NewFloat(0)) != 0)
+		dest.SetBool(srcVal.Sign() != 0)
 		return nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		bn, _ := srcVal.Int(nil)
@@ -265,8 +245,8 @@ var mapBigFloatSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 		dest.SetUint(bn.Uint64())
 		return nil
 	case reflect.Float32, reflect.Float64:
-		n, _ := srcVal.Float64()
-		if dest.OverflowFloat(n) {
+		n, a := srcVal.Float64()
+		if dest.OverflowFloat(n) || (math.IsInf(n, 0) && (a == big.Below || a == big.Above)) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
 		dest.SetFloat(n)
@@ -328,4 +308,96 @@ var mapBigFloatDest MapFunc = func(m *Mapper, src, dest reflect.Value) error {
 		}
 	}
 	return NewInvalidMappingError(src.Type(), dest.Type(), "")
+}
+
+var mapBigRatSrc MapFunc = func(m *Mapper, src, dest reflect.Value) error {
+	if m.StrictTypes && src.Type() != dest.Type() {
+		return NewInvalidMappingError(src.Type(), dest.Type(), "strict mode")
+	}
+	switch dest.Kind() {
+	case reflect.String:
+		dest.SetString(src.Addr().Interface().(*big.Rat).String())
+		return nil
+	case reflect.Slice, reflect.Array:
+		if dest.Kind() == reflect.Slice {
+			dest.Set(reflect.MakeSlice(dest.Type(), 2, 2))
+		}
+		if dest.Kind() == reflect.Array && dest.Len() != 2 {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "array must have length 2")
+		}
+		bn := src.Addr().Interface().(*big.Rat)
+		if err := m.MapRefl(reflect.ValueOf(bn.Num()), dest.Index(0)); err != nil {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "")
+		}
+		if err := m.MapRefl(reflect.ValueOf(bn.Denom()), dest.Index(1)); err != nil {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "")
+		}
+		return nil
+	case reflect.Struct:
+		switch dest.Type() {
+		case bigRatTy:
+			dest.Set(src)
+			return nil
+		case bigFloatTy:
+			dest.Set(reflect.ValueOf(new(big.Float).SetRat(src.Addr().Interface().(*big.Rat))).Elem())
+			return nil
+		}
+	}
+	if dest.Kind() == reflect.String {
+		dest.SetString(src.Addr().Interface().(*big.Rat).String())
+		return nil
+	}
+	// Try to use big.Float as an intermediate.
+	bf := new(big.Float).SetRat(src.Addr().Interface().(*big.Rat))
+	if err := m.MapRefl(reflect.ValueOf(bf), dest); err != nil {
+		return NewInvalidMappingError(src.Type(), dest.Type(), "")
+	}
+	return nil
+}
+
+var mapBigRatDest MapFunc = func(m *Mapper, src, dest reflect.Value) error {
+	if m.StrictTypes && src.Type() != dest.Type() {
+		return NewInvalidMappingError(src.Type(), dest.Type(), "strict mode")
+	}
+	switch src.Kind() {
+	case reflect.String:
+		bn, ok := new(big.Rat).SetString(src.String())
+		if !ok {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "invalid number")
+		}
+		dest.Set(reflect.ValueOf(bn).Elem())
+		return nil
+	case reflect.Slice, reflect.Array:
+		if src.Len() != 2 {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "invalid slice length")
+		}
+		var num, den big.Int
+		if err := m.MapRefl(src.Index(0), reflect.ValueOf(&num).Elem()); err != nil {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "")
+		}
+		if err := m.MapRefl(src.Index(1), reflect.ValueOf(&den).Elem()); err != nil {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "")
+		}
+		dest.Set(reflect.ValueOf(new(big.Rat).SetFrac(&num, &den)).Elem())
+		return nil
+	case reflect.Struct:
+		switch src.Type() {
+		case bigRatTy:
+			dest.Set(src)
+			return nil
+		case bigFloatTy:
+			br, _ := src.Addr().Interface().(*big.Float).Rat(nil)
+			dest.Set(reflect.ValueOf(br).Elem())
+			return nil
+		}
+	}
+	// Try to use big.Float as an intermediate.
+	bf := new(big.Float)
+	if err := m.MapRefl(src, reflect.ValueOf(bf)); err != nil {
+		return NewInvalidMappingError(src.Type(), dest.Type(), "")
+	}
+	if err := m.MapRefl(reflect.ValueOf(bf), dest); err != nil {
+		return NewInvalidMappingError(src.Type(), dest.Type(), "")
+	}
+	return nil
 }

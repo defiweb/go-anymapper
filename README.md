@@ -16,40 +16,47 @@ the destination. The function will try to map the source to the destination usin
 
 - If the dest value is an empty interface, the src value is assigned to it.
 - `bool` ⇔ `intX`, `uintX`, `floatX` ⇒ `true` ⇔ `1`, `false` ⇔ `0` (if source is number, then `≠0` ⇒ `true`).
-- `intX`, `uintX`, `floatX` ⇔ `intX`, `uintX`, `floatX` ⇒ cast numbers to the destination type if not overflow.
-- `string` ⇔ `intX`, `uintX` ⇒ converts string to or from number using `big.Int.SetString` and `big.Int.String`.
+- `intX`, `uintX`, `floatX` ⇔ `intX`, `uintX`, `floatX` ⇒ cast numbers to the destination type.
+- `intX`, `uintX`, `floatX` ⇔ `[]byte` ⇒ converts using `binary.Read` and `binary.Write`.
+- `intX`, `uintX`, `floatX` ⇔ `[X]byte` ⇒ converts using `binary.Read` and `binary.Write`.
+- `string` ⇔ `intX`, `uintX` ⇒ converts using `big.Int.SetString` and `big.Int.String`.
 - `string` ⇔ `floatX` ⇒ converts string to or from number using `big.Float.SetString` and `big.Float.String`.
-- `string` ⇔ `[]byte` ⇒ converts string to or from byte array using `[]byte(s)` and `string(b)`.
-- `[]byte` ⇔ `intX`, `uintX` ⇒ converts byte slice to or from number using `big.Int.SetBytes` and `big.Int.Bytes`.
-- `[X]byte` ⇔ `intX`, `uintX` ⇒ converts byte array to or from number using `big.Int.SetBytes` and `big.Int.Bytes`.
+- `string` ⇔ `[]byte` ⇒ converts using `[]byte(s)` and `string(b)`.
 - `slice` ⇔ `slice` ⇒ recursively map each slice element.
 - `slice` ⇔ `array` ⇒ recursively map each slice element if lengths are the same.
+- `array` ⇔ `array` ⇒ recursively map each array element if lengths are the same.
 - `map` ⇔ `map` ⇒ recursively map every key and value pair.
 - `struct` ⇔ `struct` ⇒ recursively map every struct field.
 - `struct` ⇔ `map[string]X` ⇒ map struct fields to map elements using field names as keys and vice versa.
 
-Please note, that mapping may fail if the destination type it not large enough to hold the source value. For example,
-mapping `int64` to `int8` may fail because `int64` can hold values larger than `int8`. This is also true for mapping
-numbers to byte slices or arrays.
+The above types refer to the type kind, not the actual type, hence `type MyInt int` is also considered as `int`.
 
-The above types refers to type kind, not to the actual type, hence `type MyInt int` is considered to be `int` as well.
+Mapping will fail if the target type is not large enough to hold the source value. For example, mapping `int64`
+to `int8` may fail because `int64` can store values larger than `int8`.
+
+When mapping numbers from a byte slice or array, the length of the slice/array *must* be the same as the size of the
+variable in bytes. The size of `int`, `uint` is always considered as 64 bits.
 
 In addition to the above rules, the default configuration of the mapper supports the following conversions:
 
 - `time.Time` ⇔ `string` ⇒ converts string to or from time using RFC3339 format.
-- `time.Time` ⇔  `uint`, `uint32`, `uint64`, `int`, `int32`, `int64` ⇒ converts time to or from Unix timestamp.
+- `time.Time` ⇔  `uint`, `uint32`, `uint64`, `int`, `int32`, `int64` ⇒ convert using Unix timestamp.
 - `time.Time` ⇔  `uint8`, `uint16`, `int8`, `int16` ⇒ not allowed.
 - `time.Time` ⇔  `floatX` ⇒ convert to or from unix timestamp, preserving the fractional part of a second.
-- `time.Time` ⇔  `big.Int` ⇒ convert to or from unix timestamp
-- `time.Time` ⇔  `big.Float` ⇒ convert to or from unix timestamp, preserving the fractional part of a second.
-- `time.Time` ⇔  `X` ⇒ if none of the above rules apply, `time.Time` will be treated as `int64`.
-- `big.Int` ⇔ `intX`, `uintX`, `floatX` ⇒ converts big integer to or from number if not overflow.
-- `big.Int` ⇔ `string` ⇒ converts to or from string using `big.Int.String` and `big.Int.SetString`.
-- `big.Int` ⇔ `[]byte` ⇒ converts to or from byte array using `big.Int.Bytes` and `big.Int.SetBytes`.
-- `big.Int` ⇔ `[X]byte` ⇒ converts to or from byte array using `big.Int.Bytes` and `big.Int.SetBytes` if not overflow.
-- `big.Int` ⇔ `big.Float` ⇒ coverts number to the destination type (float numbers are rounded down).
-- `big.Float` ⇔ `intX`, `uintX`, `floatX` ⇒ converts big float to or from number if not overflow.
+- `time.Time` ⇔  `big.Int` ⇒ convert using Unix timestamp.
+- `time.Time` ⇔  `big.Float` ⇒ convert using Unix timestamp, preserving the fractional part of a second.
+- `time.Time` ⇔  _other_ ⇒ try to convert using `int64` as intermediate value.
+- `big.Int` ⇔ `intX`, `uintX`, `floatX` ⇒ convert using `big.Int.Int64` and `big.Int.SetUint64`.
+- `big.Int` ⇔ `string` ⇒ converts using `big.Int.String` and `big.Int.SetString`.
+- `big.Int` ⇔ `[]byte` ⇒ converts using `big.Int.Bytes` and `big.Int.SetBytes`.
+- `big.Int` ⇔ `big.Float` ⇒ coverts using `big.Float.Int` and `big.Float.SetInt`.
+- `big.Float` ⇔ `intX`, `uintX` ⇒ convert using `big.Float.Int64` and `big.Float.SetUint64`.
+- `big.Float` ⇔ `floatX` ⇒ convert using `big.Float.Float64` and `big.Float.SetFloat64`.
 - `big.Float` ⇔ `string` ⇒ converts to or from string using `big.Float.String` and `big.Float.SetString`.
+- `big.Rat` ⇔ `string` ⇒ converts to or from string using `big.Rat.String` and `big.Rat.SetString`.
+- `big.Rat` ⇔ `big.Float` ⇒ converts using `big.Float.SetRat` and `big.Float.Rat`.
+- `big.Rat` ⇔ `slice`, `[2]array` ⇒ convert first element to/from numerator and second to/form denominator.
+- `big.Rat` ⇔ _other_ ⇒ try to convert using `big.Float` as intermediate value.
 
 ### Mapping structures
 
@@ -57,8 +64,7 @@ Structures are treated by mapper as key-value maps. The mapper will try to map r
 structure to the corresponding field of the destination structure or map.
 
 Field names can be overridden with a tag (whose name is defined in `Mapper.Tag`, default is `map`). The tag can contain
-a list of field names separated by `Mapper.Separator` (default is `.`). In this case, the field will be treated as a
-nested field. For example, the following struct:
+a list of field names separated by `Mapper.Separator` (default is `.`). For example, the following struct:
 
 ```
 type Foo struct {
@@ -110,10 +116,9 @@ respectively. The values are the mapping functions.
 
 ### Default mapper instance
 
-The package defines the default mapper instance `DefaultMapper` that can be used to map values. The functions `Map`
-and `MapRefl`are wrappers around the `DefaultMapper.Map` and `DefaultMapper.MapRefl` methods. It is possible to
-change configuration of the default mapper but it may affect other packages that use the default mapper. To avoid
-this, it is recommended to create a copy of the default mapper using the `DefaultMapper.Copy` method.
+The package defines the default mapper instance `DefaultMapper` that is used by `Map` and `MapRefl` functions. It is
+possible to change configuration of the default mapper, but it may affect other packages that use the default mapper. To
+avoid this, it is recommended to create a copy of the default mapper using the `DefaultMapper.Copy` method.
 
 ## Examples
 
@@ -209,7 +214,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println(b) // { X1: 1, Y1: 2, X2: 3, Y2: 4 }
+	fmt.Printf("%+v\n", b) // {X1:1 Y1:2 X2:3 Y2:4}
 }
 ```
 
@@ -229,12 +234,15 @@ type Val struct {
 	X *big.Int
 }
 
-func (v *Val) MapFrom(m *anymapper.Mapper, x any) error {
-	return m.Map(x, &v.X)
+func (v *Val) MapFrom(m *anymapper.Mapper, x reflect.Value) error {
+	return m.Map(x.Interface(), &v.X)
 }
 
-func (v *Val) MapInto(m *anymapper.Mapper, x any) error {
-	return m.Map(v.X, x)
+func (v *Val) MapInto(m *anymapper.Mapper, x reflect.Value) error {
+	if v.X == nil {
+		return m.Map(0, x.Addr().Interface())
+	}
+	return m.Map(v.X, x.Addr().Interface())
 }
 
 func main() {
@@ -273,10 +281,14 @@ func main() {
 
 	typ := reflect.TypeOf(Val{})
 	anymapper.DefaultMapper.MapFrom[typ] = func(m *anymapper.Mapper, src, dest reflect.Value) error {
-		return m.MapRefl(src, src.FieldByName("X").Addr())
+		x := src.FieldByName("X")
+		if x.IsNil() {
+			return m.MapRefl(reflect.ValueOf(0), dest)
+		}
+		return m.MapRefl(src.FieldByName("X"), dest)
 	}
 	anymapper.DefaultMapper.MapInto[typ] = func(m *anymapper.Mapper, src, dest reflect.Value) error {
-		return m.Map(src.FieldByName("X"), dest)
+		return m.MapRefl(src, dest.FieldByName("X").Addr())
 	}
 
 	err := anymapper.Map(a, &b)
@@ -290,4 +302,4 @@ func main() {
 
 ## Documentation
 
-[https:pkg.go.dev/github.com/defiweb/go-anymapper](https:pkg.go.dev/github.com/defiweb/go-anymapper)
+[https://pkg.go.dev/github.com/defiweb/go-anymapper](https://pkg.go.dev/github.com/defiweb/go-anymapper)

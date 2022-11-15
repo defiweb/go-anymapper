@@ -1,6 +1,8 @@
 package anymapper
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -26,22 +28,25 @@ type MapFrom interface {
 
 // DefaultMapper is the default Mapper used by the Map and MapRefl functions.
 // It is configured to use the "map" struct tag, the "." separator. It also
-// provides additional mapping rules for time.Time, big.Int and big.Float.
-// It can be modified to change the default behavior, but if the mapper is
-// used by other packages, it is recommended to create a copy of the default
-// mapper and modify the copy.
+// provides additional mapping rules for time.Time, big.Int, big.Float and
+// big.Rat. It can be modified to change the default behavior, but if the
+// mapper is used by other packages, it is recommended to create a copy of the
+// default mapper and modify the copy.
 var DefaultMapper = &Mapper{
 	Tag:       `map`,
 	Separator: `.`,
+	ByteOrder: binary.BigEndian,
 	MapFrom: map[reflect.Type]MapFunc{
 		timeTy:     mapTimeSrc,
 		bigIntTy:   mapBigIntSrc,
 		bigFloatTy: mapBigFloatSrc,
+		bigRatTy:   mapBigRatSrc,
 	},
 	MapInto: map[reflect.Type]MapFunc{
 		timeTy:     mapTimeDest,
 		bigIntTy:   mapBigIntDest,
 		bigFloatTy: mapBigFloatDest,
+		bigRatTy:   mapBigRatDest,
 	},
 }
 
@@ -66,6 +71,9 @@ type Mapper struct {
 	// FieldMapper is a function that maps a struct field name to another name,
 	// it is used only when the tag is not present.
 	FieldMapper func(string) string
+
+	// ByteOrder is the byte order used to map data to and from byte slices.
+	ByteOrder binary.ByteOrder
 
 	// MapInto is a map of types that can map themselves to another type.
 	MapInto map[reflect.Type]MapFunc
@@ -243,41 +251,21 @@ func (m *Mapper) mapInt(src, dest reflect.Value) error {
 		dest.SetInt(src.Int())
 		return nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n := uint64(src.Int())
-		if dest.OverflowUint(n) {
+		n := src.Int()
+		if n < 0 || dest.OverflowUint(uint64(n)) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
-		dest.SetUint(n)
+		dest.SetUint(uint64(n))
 		return nil
 	case reflect.Float32, reflect.Float64:
-		n := float64(src.Int())
-		if dest.OverflowFloat(n) {
-			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
-		}
-		dest.SetFloat(n)
+		dest.SetFloat(float64(src.Int()))
 		return nil
 	case reflect.String:
 		dest.SetString(strconv.FormatInt(src.Int(), 10))
 		return nil
-	case reflect.Slice:
-		// If the destination is a slice of bytes, store the integer as a
-		// big-endian byte slice.
+	case reflect.Slice, reflect.Array:
 		if dest.Type().Elem().Kind() == reflect.Uint8 {
-			dest.SetBytes(new(big.Int).SetInt64(src.Int()).Bytes())
-			return nil
-		}
-	case reflect.Array:
-		// If the destination is an array of bytes, store the integer as a
-		// big-endian byte array, but only if the array length is large enough.
-		if dest.Type().Elem().Kind() == reflect.Uint8 {
-			b := new(big.Int).SetInt64(src.Int()).Bytes()
-			if len(b) > dest.Len() {
-				return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
-			}
-			for i := 0; i < len(b); i++ {
-				dest.Index(i).SetUint(uint64(b[i]))
-			}
-			return nil
+			return m.toBytes(src, dest)
 		}
 	}
 	return NewInvalidMappingError(src.Type(), dest.Type(), "")
@@ -292,11 +280,11 @@ func (m *Mapper) mapUint(src, dest reflect.Value) error {
 		dest.SetBool(src.Uint() != 0)
 		return nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n := int64(src.Uint())
-		if dest.OverflowInt(n) {
+		n := src.Uint()
+		if n > uint64(math.MaxInt64) || dest.OverflowInt(int64(n)) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
-		dest.SetInt(n)
+		dest.SetInt(int64(n))
 		return nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		if dest.OverflowUint(src.Uint()) {
@@ -305,34 +293,14 @@ func (m *Mapper) mapUint(src, dest reflect.Value) error {
 		dest.SetUint(src.Uint())
 		return nil
 	case reflect.Float32, reflect.Float64:
-		n := float64(src.Uint())
-		if dest.OverflowFloat(n) {
-			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
-		}
-		dest.SetFloat(n)
+		dest.SetFloat(float64(src.Uint()))
 		return nil
 	case reflect.String:
 		dest.SetString(strconv.FormatUint(src.Uint(), 10))
 		return nil
-	case reflect.Slice:
-		// If the destination is a slice of bytes, store the integer as a
-		// big-endian byte slice.
+	case reflect.Slice, reflect.Array:
 		if dest.Type().Elem().Kind() == reflect.Uint8 {
-			dest.SetBytes(new(big.Int).SetUint64(src.Uint()).Bytes())
-			return nil
-		}
-		// If the destination is an array of bytes, store the integer as a
-		// big-endian byte array, but only if the array length is large enough.
-	case reflect.Array:
-		if dest.Type().Elem().Kind() == reflect.Uint8 {
-			b := new(big.Int).SetUint64(src.Uint()).Bytes()
-			if len(b) > dest.Len() {
-				return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
-			}
-			for i := 0; i < len(b); i++ {
-				dest.Index(i).SetUint(uint64(b[i]))
-			}
-			return nil
+			return m.toBytes(src, dest)
 		}
 	}
 	return NewInvalidMappingError(src.Type(), dest.Type(), "")
@@ -370,6 +338,8 @@ func (m *Mapper) mapFloat(src, dest reflect.Value) error {
 	case reflect.String:
 		dest.SetString(strconv.FormatFloat(src.Float(), 'f', -1, 64))
 		return nil
+	case reflect.Slice, reflect.Array:
+		return m.toBytes(src, dest)
 	}
 	return NewInvalidMappingError(src.Type(), dest.Type(), "")
 }
@@ -393,7 +363,7 @@ func (m *Mapper) mapString(src, dest reflect.Value) error {
 		if !ok {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "invalid number")
 		}
-		if dest.OverflowInt(n.Int64()) {
+		if !n.IsInt64() || dest.OverflowInt(n.Int64()) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
 		dest.SetInt(n.Int64())
@@ -403,7 +373,7 @@ func (m *Mapper) mapString(src, dest reflect.Value) error {
 		if !ok {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "invalid number")
 		}
-		if dest.OverflowUint(n.Uint64()) {
+		if !n.IsUint64() || dest.OverflowUint(n.Uint64()) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
 		dest.SetUint(n.Uint64())
@@ -413,8 +383,8 @@ func (m *Mapper) mapString(src, dest reflect.Value) error {
 		if !ok {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "invalid number")
 		}
-		n, _ := bn.Float64()
-		if dest.OverflowFloat(n) {
+		n, a := bn.Float64()
+		if dest.OverflowFloat(n) || (math.IsInf(n, 0) && (a == big.Below || a == big.Above)) {
 			return NewInvalidMappingError(src.Type(), dest.Type(), "overflow")
 		}
 		dest.SetFloat(n)
@@ -447,15 +417,11 @@ func (m *Mapper) mapSlice(src, dest reflect.Value) error {
 		return NewInvalidMappingError(src.Type(), dest.Type(), "strict mode")
 	}
 	switch dest.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
 		if src.Type().Elem().Kind() == reflect.Uint8 {
-			dest.SetInt(new(big.Int).SetBytes(src.Bytes()).Int64())
-			return nil
-		}
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if src.Type().Elem().Kind() == reflect.Uint8 {
-			dest.SetUint(new(big.Int).SetBytes(src.Bytes()).Uint64())
-			return nil
+			return m.fromBytes(src.Bytes(), dest)
 		}
 	case reflect.String:
 		if src.Type().Elem().Kind() == reflect.Uint8 {
@@ -463,11 +429,10 @@ func (m *Mapper) mapSlice(src, dest reflect.Value) error {
 			return nil
 		}
 	case reflect.Slice:
-		if src.Type() == dest.Type() {
-			dest.Set(reflect.MakeSlice(dest.Type(), src.Len(), src.Cap()))
-			reflect.Copy(dest, src)
-			return nil
-		}
+		// We do not want to use reflect.Copy here for the same types, because
+		// it will not use the mapper for slice elements. The mapper tries to
+		// copy all values instead of holding references, so copying the slice
+		// of pointers will not copy the underlying values.
 		dest.Set(reflect.MakeSlice(dest.Type(), src.Len(), src.Len()))
 		for i := 0; i < src.Len(); i++ {
 			if err := m.MapRefl(src.Index(i), dest.Index(i)); err != nil {
@@ -494,6 +459,25 @@ func (m *Mapper) mapArray(src, dest reflect.Value) error {
 		return NewInvalidMappingError(src.Type(), dest.Type(), "strict mode")
 	}
 	switch dest.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		if src.Type().Elem().Kind() == reflect.Uint8 {
+			b := make([]byte, src.Len())
+			for i := 0; i < src.Len(); i++ {
+				b[i] = byte(src.Index(i).Uint())
+			}
+			return m.fromBytes(b, dest)
+		}
+	case reflect.String:
+		if src.Type().Elem().Kind() == reflect.Uint8 {
+			b := make([]byte, src.Len())
+			for i := 0; i < src.Len(); i++ {
+				b[i] = byte(src.Index(i).Uint())
+			}
+			dest.SetString(string(b))
+			return nil
+		}
 	case reflect.Slice:
 		dest.Set(reflect.MakeSlice(dest.Type(), src.Len(), src.Len()))
 		for i := 0; i < src.Len(); i++ {
@@ -528,22 +512,31 @@ func (m *Mapper) mapMap(src, dest reflect.Value) error {
 		}
 		return nil
 	case reflect.Map:
-		for _, key := range src.MapKeys() {
+		destKeyType := dest.Type().Key()
+		for _, srcKey := range src.MapKeys() {
+			// Map key.
+			destKey := srcKey
+			if srcKey.Type() != destKeyType {
+				destKey = reflect.New(destKeyType).Elem()
+				if err := m.MapRefl(srcKey, destKey); err != nil {
+					return NewInvalidMappingError(srcKey.Type(), destKeyType, "unable to map key")
+				}
+			}
 			// It is important here to use destValue because we need to check
 			// if the value can be set directly or if we need to create a new
 			// value, the destValue function will always return a value that
 			// can be set, otherwise it will return an invalid value.
-			destVal := m.destValue(dest.MapIndex(key))
+			destVal := m.destValue(dest.MapIndex(destKey))
 			if destVal.IsValid() {
-				if err := m.MapRefl(src.MapIndex(key), destVal); err != nil {
+				if err := m.MapRefl(src.MapIndex(srcKey), destVal); err != nil {
 					return err
 				}
 			} else {
 				v := reflect.New(dest.Type().Elem()).Elem()
-				if err := m.MapRefl(src.MapIndex(key), v); err != nil {
+				if err := m.MapRefl(src.MapIndex(srcKey), v); err != nil {
 					return err
 				}
-				dest.SetMapIndex(key, v)
+				dest.SetMapIndex(destKey, v)
 			}
 		}
 		return nil
@@ -626,9 +619,6 @@ func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
 		if v.Type().Implements(mapFromTy) {
 			return v
 		}
-		if m.MapFrom[v.Type()] != nil {
-			return v
-		}
 		v = v.Elem()
 	}
 	return v
@@ -673,6 +663,73 @@ func (m *Mapper) destValue(v reflect.Value) reflect.Value {
 		v = v.Elem()
 	}
 	return settable
+}
+
+// toBytes converts a value to a byte slice using binary.Write.
+func (m *Mapper) toBytes(src, dest reflect.Value) error {
+	// binary.Write does not work with Int and Uint types, so we need to
+	// convert them to int64 and uint64. To make mapped values compatible
+	// between 32 and 64-bit architectures, we always use int64 and uint64.
+	switch src.Kind() {
+	case reflect.Int:
+		src = reflect.ValueOf(src.Int())
+	case reflect.Uint:
+		src = reflect.ValueOf(src.Uint())
+	}
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, m.ByteOrder, src.Interface()); err != nil {
+		return NewInvalidMappingError(src.Type(), dest.Type(), err.Error())
+	}
+	switch dest.Kind() {
+	case reflect.Slice:
+		if dest.Type().Elem().Kind() != reflect.Uint8 {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "")
+		}
+		dest.SetBytes(buf.Bytes())
+	case reflect.Array:
+		if dest.Type().Elem().Kind() != reflect.Uint8 {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "")
+		}
+		if dest.Len() != buf.Len() {
+			return NewInvalidMappingError(src.Type(), dest.Type(), "invalid array length")
+		}
+		reflect.Copy(dest, reflect.ValueOf(buf.Bytes()))
+	default:
+		return NewInvalidMappingError(src.Type(), dest.Type(), "")
+	}
+	return nil
+}
+
+// fromBytes converts a byte slice to a value using binary.Read.
+func (m *Mapper) fromBytes(src []byte, dest reflect.Value) error {
+	if len(src) != int(dest.Type().Size()) {
+		return NewInvalidMappingError(reflect.TypeOf(src), dest.Type(), "invalid byte slice length")
+	}
+	switch dest.Kind() {
+	case reflect.Int:
+		var v int64
+		if err := binary.Read(bytes.NewReader(src), m.ByteOrder, &v); err != nil {
+			return NewInvalidMappingError(reflect.TypeOf(src), dest.Type(), err.Error())
+		}
+		if dest.OverflowInt(v) {
+			return NewInvalidMappingError(reflect.TypeOf(src), dest.Type(), "overflow")
+		}
+		dest.SetInt(v)
+	case reflect.Uint:
+		var v uint64
+		if err := binary.Read(bytes.NewReader(src), m.ByteOrder, &v); err != nil {
+			return NewInvalidMappingError(reflect.TypeOf(src), dest.Type(), err.Error())
+		}
+		if dest.OverflowUint(v) {
+			return NewInvalidMappingError(reflect.TypeOf(src), dest.Type(), "overflow")
+		}
+		dest.SetUint(v)
+	default:
+		if err := binary.Read(bytes.NewBuffer(src), m.ByteOrder, dest.Addr().Interface()); err != nil {
+			return NewInvalidMappingError(reflect.TypeOf(src), dest.Type(), err.Error())
+		}
+	}
+	return nil
 }
 
 // addr returns the address of the value if it is addressable and it not a
