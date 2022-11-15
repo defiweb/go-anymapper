@@ -429,15 +429,25 @@ func (m *Mapper) mapSlice(src, dest reflect.Value) error {
 			return nil
 		}
 	case reflect.Slice:
-		// We do not want to use reflect.Copy here for the same types, because
-		// it will not use the mapper for slice elements. The mapper tries to
-		// copy all values instead of holding references, so copying the slice
-		// of pointers will not copy the underlying values.
-		dest.Set(reflect.MakeSlice(dest.Type(), src.Len(), src.Len()))
+		// Instead of creating a new slice, we reuse the existing one and only
+		// adjust the length. That way the mapper will map values to the existing
+		// elements, instead of creating new ones. It may be especially useful
+		// when dest is a slice of interfaces.
+		if src.Len() > dest.Len() {
+			dest.Set(reflect.AppendSlice(
+				dest,
+				reflect.MakeSlice(dest.Type(), src.Len()-dest.Len(), src.Len()-dest.Len())),
+			)
+		}
 		for i := 0; i < src.Len(); i++ {
 			if err := m.MapRefl(src.Index(i), dest.Index(i)); err != nil {
 				return err
 			}
+		}
+		// If the source slice is shorter than the destination, we need to
+		// zero out the remaining elements.
+		for i := src.Len(); i < dest.Len(); i++ {
+			dest.Index(i).Set(reflect.Zero(dest.Type().Elem()))
 		}
 		return nil
 	case reflect.Array:

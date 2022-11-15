@@ -217,8 +217,10 @@ func TestMap(t *testing.T) {
 		// slice <-> slice
 		{name: `[]byte("foo")->[]byte`, src: []byte("foo"), dst: new([]byte), exp: []byte("foo")},
 		{name: `[]int->[]string`, src: []int{1, 2, 3}, dst: new([]string), exp: []string{"1", "2", "3"}},
+		{name: `[]int->[]any`, src: []int{1, 2, 3}, dst: ptr([]any{new(string), new(int)}), exp: []any{ptr("1"), ptr(2), 3}},
 		{name: `[]string->[]int`, src: []string{"1", "2", "3"}, dst: new([]int), exp: []int{1, 2, 3}},
 		{name: `[]string->[]int#invalid`, src: []string{"foo"}, dst: new([]int), err: true}, // error
+		{name: `[]int{1}->[]int{0,1}`, src: []int{1}, dst: ptr([]int{0, 1}), exp: []int{1, 0}},
 
 		// slice <-> array
 		{name: `[]byte("foo")->[3]byte`, src: []byte("foo"), dst: new([3]byte), exp: [3]byte{'f', 'o', 'o'}},
