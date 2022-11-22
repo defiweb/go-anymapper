@@ -14,7 +14,7 @@ go get github.com/defiweb/go-anymapper
 The simplest way to use the `go-anymapper` package is to use the `Map` function. It takes two arguments: the source and
 the destination. The function will try to map the source to the destination using the following rules:
 
-- If the dest value is an empty interface, the src value is assigned to it.
+- If the dst value is an empty interface, the src value is assigned to it.
 - `bool` ⇔ `intX`, `uintX`, `floatX` ⇒ `true` ⇔ `1`, `false` ⇔ `0` (if source is number, then `≠0` ⇒ `true`).
 - `intX`, `uintX`, `floatX` ⇔ `intX`, `uintX`, `floatX` ⇒ cast numbers to the destination type.
 - `intX`, `uintX`, `floatX` ⇔ `[]byte` ⇒ converts using `binary.Read` and `binary.Write`.
@@ -100,24 +100,24 @@ an empty interface, the source value will be assigned to it regardless of the va
 
 The strict type check also applies to custom types, for example, `type MyInt int` will not be treated as `int` anymore.
 
-### `MapInto` and `MapFrom` interfaces:
+### `MapTo` and `MapFrom` interfaces:
 
 The `go-anymapper` package provides two interfaces that can be implemented by the source and destination types to
 customize the mapping process.
 
-If the source value implements `MapInto` interface, the `MapInto` method will be used to map the source value to the
+If the source value implements `MapTo` interface, the `MapTo` method will be used to map the source value to the
 destination value.
 
 If the destination value implements `MapFrom` interface, the `MapFrom` method will be used to map the source value to
 the destination value.
 
-If both source and destination values implement the `MapInto` and `MapFrom` interfaces then `MapInto` will be used
+If both source and destination values implement the `MapTo` and `MapFrom` interfaces then `MapTo` will be used
 first, then `MapFrom` if the first one fails.
 
-### `Mapper.MapInto` and `Mapper.MapFrom` maps:
+### `Mapper.MapTo` and `Mapper.MapFrom` maps:
 
 If it is not possible to implement the above interfaces, the custom mapping functions can be registered with the
-`Mapper.MapInto` and `Mapper.MapFrom` maps. The keys of these maps are the types of the destination and source values
+`Mapper.MapTo` and `Mapper.MapFrom` maps. The keys of these maps are the types of the destination and source values
 respectively. The values are the mapping functions.
 
 ### Default mapper instance
@@ -224,7 +224,7 @@ func main() {
 }
 ```
 
-### MapFrom and MapInto interfaces
+### MapFrom and MapTo interfaces
 
 ```go
 package main
@@ -244,7 +244,7 @@ func (v *Val) MapFrom(m *anymapper.Mapper, x reflect.Value) error {
 	return m.Map(x.Interface(), &v.X)
 }
 
-func (v *Val) MapInto(m *anymapper.Mapper, x reflect.Value) error {
+func (v *Val) MapTo(m *anymapper.Mapper, x reflect.Value) error {
 	if v.X == nil {
 		return m.Map(0, x.Addr().Interface())
 	}
@@ -264,7 +264,7 @@ func main() {
 }
 ```
 
-### MapFrom and MapInto maps
+### MapFrom and MapTo maps
 
 ```go
 package main
@@ -286,15 +286,15 @@ func main() {
 	var b Val
 
 	typ := reflect.TypeOf(Val{})
-	anymapper.DefaultMapper.MapFrom[typ] = func(m *anymapper.Mapper, src, dest reflect.Value) error {
+	anymapper.DefaultMapper.MapFrom[typ] = func(m *anymapper.Mapper, src, dst reflect.Value) error {
 		x := src.FieldByName("X")
 		if x.IsNil() {
-			return m.MapRefl(reflect.ValueOf(0), dest)
+			return m.MapRefl(reflect.ValueOf(0), dst)
 		}
-		return m.MapRefl(src.FieldByName("X"), dest)
+		return m.MapRefl(src.FieldByName("X"), dst)
 	}
-	anymapper.DefaultMapper.MapInto[typ] = func(m *anymapper.Mapper, src, dest reflect.Value) error {
-		return m.MapRefl(src, dest.FieldByName("X").Addr())
+	anymapper.DefaultMapper.MapTo[typ] = func(m *anymapper.Mapper, src, dst reflect.Value) error {
+		return m.MapRefl(src, dst.FieldByName("X").Addr())
 	}
 
 	err := anymapper.Map(a, &b)

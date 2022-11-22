@@ -221,6 +221,7 @@ func TestMap(t *testing.T) {
 		{name: `[]string->[]int`, src: []string{"1", "2", "3"}, dst: new([]int), exp: []int{1, 2, 3}},
 		{name: `[]string->[]int#invalid`, src: []string{"foo"}, dst: new([]int), err: true}, // error
 		{name: `[]int{1}->[]int{0,1}`, src: []int{1}, dst: ptr([]int{0, 1}), exp: []int{1, 0}},
+		{name: `[]int{1}->[]any{}`, src: []int{1}, dst: ptr(anySlice()), exp: []any{1}},
 
 		// slice <-> array
 		{name: `[]byte("foo")->[3]byte`, src: []byte("foo"), dst: new([3]byte), exp: [3]byte{'f', 'o', 'o'}},
@@ -494,11 +495,11 @@ func TestInvalidValues(t *testing.T) {
 		err := MapRefl(reflect.Value{}, reflect.ValueOf(&dst))
 		assert.Error(t, err)
 	})
-	t.Run("invalid-dest", func(t *testing.T) {
+	t.Run("invalid-dst", func(t *testing.T) {
 		err := MapRefl(reflect.ValueOf("foo"), reflect.Value{})
 		assert.Error(t, err)
 	})
-	t.Run("unaddressable-dest", func(t *testing.T) {
+	t.Run("unaddressable-dst", func(t *testing.T) {
 		var dst string
 		err := MapRefl(reflect.ValueOf("foo"), reflect.ValueOf(dst))
 		assert.Error(t, err)
@@ -513,8 +514,8 @@ func (c *customType) MapFrom(m *Mapper, src reflect.Value) error {
 	return m.MapRefl(src, reflect.ValueOf(&c.foo))
 }
 
-func (c customType) MapInto(m *Mapper, dest reflect.Value) error {
-	return m.MapRefl(reflect.ValueOf(c.foo), dest)
+func (c customType) MapTo(m *Mapper, dst reflect.Value) error {
+	return m.MapRefl(reflect.ValueOf(c.foo), dst)
 }
 
 func TestCustomType(t *testing.T) {
@@ -523,7 +524,7 @@ func TestCustomType(t *testing.T) {
 		require.NoError(t, Map("foo", &dst))
 		assert.Equal(t, "foo", dst.foo)
 	})
-	t.Run("mapInto", func(t *testing.T) {
+	t.Run("mapTo", func(t *testing.T) {
 		var dst string
 		require.NoError(t, Map(customType{foo: "foo"}, &dst))
 		assert.Equal(t, "foo", dst)
@@ -533,7 +534,7 @@ func TestCustomType(t *testing.T) {
 		require.NoError(t, Map("foo", &dst))
 		assert.Equal(t, "foo", dst.foo)
 	})
-	t.Run("mapIntoPtr", func(t *testing.T) {
+	t.Run("mapToPtr", func(t *testing.T) {
 		var dst string
 		require.NoError(t, Map(&customType{foo: "foo"}, &dst))
 		assert.Equal(t, "foo", dst)
@@ -551,18 +552,18 @@ func TestCustomMapFunc(t *testing.T) {
 	}
 	typ := reflect.TypeOf(customType{})
 	m := DefaultMapper.Copy()
-	m.MapFrom[typ] = func(m *Mapper, src, dest reflect.Value) error {
-		return m.MapRefl(src.FieldByName("foo"), dest)
+	m.MapFrom[typ] = func(m *Mapper, src, dst reflect.Value) error {
+		return m.MapRefl(src.FieldByName("foo"), dst)
 	}
-	m.MapInto[typ] = func(m *Mapper, src, dest reflect.Value) error {
-		return m.MapRefl(src, reflect.ValueOf(&dest.Addr().Interface().(*customType).foo))
+	m.MapTo[typ] = func(m *Mapper, src, dst reflect.Value) error {
+		return m.MapRefl(src, reflect.ValueOf(&dst.Addr().Interface().(*customType).foo))
 	}
 	t.Run("mapFrom", func(t *testing.T) {
 		var dst customType
 		require.NoError(t, m.Map("foo", &dst))
 		assert.Equal(t, "foo", dst.foo)
 	})
-	t.Run("mapInto", func(t *testing.T) {
+	t.Run("mapTo", func(t *testing.T) {
 		var dst string
 		require.NoError(t, m.Map(customType{foo: "foo"}, &dst))
 		assert.Equal(t, "foo", dst)
@@ -572,7 +573,7 @@ func TestCustomMapFunc(t *testing.T) {
 		require.NoError(t, m.Map("foo", &dst))
 		assert.Equal(t, "foo", dst.foo)
 	})
-	t.Run("mapIntoPtr", func(t *testing.T) {
+	t.Run("mapToPtr", func(t *testing.T) {
 		var dst string
 		require.NoError(t, m.Map(&customType{foo: "foo"}, &dst))
 		assert.Equal(t, "foo", dst)
@@ -681,4 +682,8 @@ func dst(v any) any {
 		r = r.Elem()
 	}
 	return r.Interface()
+}
+
+func anySlice() any {
+	return []any{}
 }
