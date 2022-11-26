@@ -649,6 +649,26 @@ func TestEmptySeparator(t *testing.T) {
 	assert.Equal(t, map[string]any{"foo:foo": "foo"}, dst)
 }
 
+func TestCopy(t *testing.T) {
+	cpy := DefaultMapper.Copy()
+	assert.Equal(t, DefaultMapper.Tag, cpy.Tag)
+	assert.Equal(t, DefaultMapper.Separator, cpy.Separator)
+	assert.Equal(t, DefaultMapper.ByteOrder, cpy.ByteOrder)
+	assert.Equal(t, &DefaultMapper.FieldMapper, &cpy.FieldMapper)
+	assert.Equal(t, len(DefaultMapper.MapFrom), len(cpy.MapFrom))
+	assert.Equal(t, len(DefaultMapper.MapTo), len(cpy.MapTo))
+	for k, v := range DefaultMapper.MapFrom {
+		rv1 := reflect.ValueOf(v)
+		rv2 := reflect.ValueOf(cpy.MapFrom[k])
+		assert.Equal(t, rv1.Pointer(), rv2.Pointer())
+	}
+	for k, v := range DefaultMapper.MapTo {
+		rv1 := reflect.ValueOf(v)
+		rv2 := reflect.ValueOf(cpy.MapTo[k])
+		assert.Equal(t, rv1.Pointer(), rv2.Pointer())
+	}
+}
+
 func TestInvalidMappingErr_WithReason(t *testing.T) {
 	err := InvalidMappingErr{From: reflect.TypeOf(1), To: reflect.TypeOf("a"), Reason: "reason"}
 	assert.Equal(t, "mapper: cannot map int to string: reason", err.Error())

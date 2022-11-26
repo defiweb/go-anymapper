@@ -145,6 +145,7 @@ func (m *Mapper) Copy() *Mapper {
 		Tag:         m.Tag,
 		Separator:   m.Separator,
 		FieldMapper: m.FieldMapper,
+		ByteOrder:   m.ByteOrder,
 	}
 	if m.MapFrom != nil {
 		cpy.MapFrom = make(map[reflect.Type]MapFunc)
