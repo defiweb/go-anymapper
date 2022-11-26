@@ -101,8 +101,33 @@ func (m *Mapper) Map(src, dst any) error {
 }
 
 func (m *Mapper) MapRefl(src, dst reflect.Value) error {
-	src = m.srcValue(src)
-	dst = m.dstValue(dst)
+	return m.mapRefl(m.srcValue(src), m.dstValue(dst))
+}
+
+// Copy creates a copy of the current Mapper with the same configuration.
+func (m *Mapper) Copy() *Mapper {
+	cpy := &Mapper{
+		Tag:         m.Tag,
+		Separator:   m.Separator,
+		FieldMapper: m.FieldMapper,
+		ByteOrder:   m.ByteOrder,
+	}
+	if m.MapFrom != nil {
+		cpy.MapFrom = make(map[reflect.Type]MapFunc)
+		for k, v := range m.MapFrom {
+			cpy.MapFrom[k] = v
+		}
+	}
+	if m.MapTo != nil {
+		cpy.MapTo = make(map[reflect.Type]MapFunc)
+		for k, v := range m.MapTo {
+			cpy.MapTo[k] = v
+		}
+	}
+	return cpy
+}
+
+func (m *Mapper) mapRefl(src, dst reflect.Value) error {
 	if !src.IsValid() {
 		return InvalidSrcErr
 	}
@@ -137,29 +162,6 @@ func (m *Mapper) MapRefl(src, dst reflect.Value) error {
 		return m.mapStruct(src, dst)
 	}
 	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-// Copy creates a copy of the current Mapper with the same configuration.
-func (m *Mapper) Copy() *Mapper {
-	cpy := &Mapper{
-		Tag:         m.Tag,
-		Separator:   m.Separator,
-		FieldMapper: m.FieldMapper,
-		ByteOrder:   m.ByteOrder,
-	}
-	if m.MapFrom != nil {
-		cpy.MapFrom = make(map[reflect.Type]MapFunc)
-		for k, v := range m.MapFrom {
-			cpy.MapFrom[k] = v
-		}
-	}
-	if m.MapTo != nil {
-		cpy.MapTo = make(map[reflect.Type]MapFunc)
-		for k, v := range m.MapTo {
-			cpy.MapTo[k] = v
-		}
-	}
-	return cpy
 }
 
 // mapFunc tries to map the source value to the destination value using the
@@ -441,7 +443,7 @@ func (m *Mapper) mapSlice(src, dst reflect.Value) error {
 			)
 		}
 		for i := 0; i < src.Len(); i++ {
-			if err := m.MapRefl(src.Index(i), dst.Index(i)); err != nil {
+			if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
 				return err
 			}
 		}
@@ -456,7 +458,7 @@ func (m *Mapper) mapSlice(src, dst reflect.Value) error {
 			return NewInvalidMappingError(src.Type(), dst.Type(), "length mismatch")
 		}
 		for i := 0; i < src.Len(); i++ {
-			if err := m.MapRefl(src.Index(i), dst.Index(i)); err != nil {
+			if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
 				return err
 			}
 		}
@@ -492,7 +494,7 @@ func (m *Mapper) mapArray(src, dst reflect.Value) error {
 	case reflect.Slice:
 		dst.Set(reflect.MakeSlice(dst.Type(), src.Len(), src.Len()))
 		for i := 0; i < src.Len(); i++ {
-			if err := m.MapRefl(src.Index(i), dst.Index(i)); err != nil {
+			if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
 				return err
 			}
 		}
@@ -506,7 +508,7 @@ func (m *Mapper) mapArray(src, dst reflect.Value) error {
 			return NewInvalidMappingError(src.Type(), dst.Type(), "length mismatch")
 		}
 		for i := 0; i < src.Len(); i++ {
-			if err := m.MapRefl(src.Index(i), dst.Index(i)); err != nil {
+			if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
 				return err
 			}
 		}
@@ -518,18 +520,20 @@ func (m *Mapper) mapArray(src, dst reflect.Value) error {
 func (m *Mapper) mapMap(src, dst reflect.Value) error {
 	switch dst.Kind() {
 	case reflect.Struct:
-		if err := m.MapRefl(src, m.structToPtrsMap(dst, true)); err != nil {
+		if err := m.mapRefl(src, m.structToPtrsMap(dst, true)); err != nil {
 			return err
 		}
 		return nil
 	case reflect.Map:
+		srcKeyType := src.Type().Key()
 		dstKeyType := dst.Type().Key()
+		dstElemType := dst.Type().Elem()
 		for _, srcKey := range src.MapKeys() {
 			// Map key.
 			dstKey := srcKey
-			if srcKey.Type() != dstKeyType {
+			if srcKeyType != dstKeyType {
 				dstKey = reflect.New(dstKeyType).Elem()
-				if err := m.MapRefl(srcKey, dstKey); err != nil {
+				if err := m.mapRefl(m.srcValue(srcKey), m.dstValue(dstKey)); err != nil {
 					return NewInvalidMappingError(srcKey.Type(), dstKeyType, "unable to map key")
 				}
 			}
@@ -539,12 +543,12 @@ func (m *Mapper) mapMap(src, dst reflect.Value) error {
 			// can be set, otherwise it will return an invalid value.
 			dstVal := m.dstValue(dst.MapIndex(dstKey))
 			if dstVal.IsValid() {
-				if err := m.MapRefl(src.MapIndex(srcKey), dstVal); err != nil {
+				if err := m.mapRefl(m.srcValue(src.MapIndex(srcKey)), dstVal); err != nil {
 					return err
 				}
 			} else {
-				v := reflect.New(dst.Type().Elem()).Elem()
-				if err := m.MapRefl(src.MapIndex(srcKey), v); err != nil {
+				v := reflect.New(dstElemType).Elem()
+				if err := m.mapRefl(m.srcValue(src.MapIndex(srcKey)), m.dstValue(v)); err != nil {
 					return err
 				}
 				dst.SetMapIndex(dstKey, v)
@@ -559,15 +563,19 @@ func (m *Mapper) mapStruct(src, dst reflect.Value) error {
 	switch dst.Kind() {
 	case reflect.Struct:
 		if src.Type() == dst.Type() {
-			dst.Set(src)
+			for i := 0; i < src.NumField(); i++ {
+				if err := m.mapRefl(m.srcValue(src.Field(i)), m.dstValue(dst.Field(i))); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
-		return m.MapRefl(m.structToPtrsMap(src, false), m.structToPtrsMap(dst, true))
+		return m.mapRefl(m.structToPtrsMap(src, false), m.structToPtrsMap(dst, true))
 	case reflect.Map:
 		if dst.Type().Key().Kind() != reflect.String {
 			return NewInvalidMappingError(src.Type(), dst.Type(), "map key must be string")
 		}
-		return m.MapRefl(m.structToPtrsMap(src, false), dst)
+		return m.mapRefl(m.structToPtrsMap(src, false), dst)
 	}
 	return NewInvalidMappingError(src.Type(), dst.Type(), "")
 }
@@ -585,9 +593,8 @@ func (m *Mapper) structToPtrsMap(v reflect.Value, initialize bool) reflect.Value
 		if initialize {
 			// The value needs to be initialized here to make sure that
 			// the value is addressable, so that it will be possible to
-			// store in a map a pointer to it. The dstValue method will
-			// do initialization if needed.
-			vField = m.dstValue(vField)
+			// store in a map a pointer to it.
+			m.initValue(vField)
 		}
 		var fields []string
 		if tag, ok := tField.Tag.Lookup(m.Tag); ok {
@@ -647,15 +654,7 @@ func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 		if !v.IsValid() {
 			break
 		}
-		if v.Kind() == reflect.Pointer && v.IsNil() && v.CanSet() {
-			v.Set(reflect.New(v.Type().Elem()))
-		}
-		if v.Kind() == reflect.Map && v.IsNil() && v.CanSet() {
-			v.Set(reflect.MakeMap(v.Type()))
-		}
-		if v.Kind() == reflect.Slice && v.IsNil() && v.CanSet() {
-			v.Set(reflect.MakeSlice(v.Type(), 0, 0))
-		}
+		m.initValue(v)
 		if v.Type().Implements(mapToTy) {
 			return v
 		}
@@ -674,6 +673,21 @@ func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 		v = v.Elem()
 	}
 	return settable
+}
+
+// initValue initializes a value if it is a pointer, map or slice.
+func (m *Mapper) initValue(v reflect.Value) {
+	if v.Kind() < reflect.Map || v.Kind() > reflect.Slice || !v.IsNil() || !v.CanSet() {
+		return
+	}
+	switch {
+	case v.Kind() == reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+	case v.Kind() == reflect.Map:
+		v.Set(reflect.MakeMap(v.Type()))
+	case v.Kind() == reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+	}
 }
 
 // toBytes converts a value to a byte slice using binary.Write.

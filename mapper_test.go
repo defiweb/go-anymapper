@@ -487,6 +487,25 @@ func TestTags(t *testing.T) {
 			C: []string{"3", "4", "5"},
 		}, dst)
 	})
+	t.Run("struct-struct#same", func(t *testing.T) {
+		type Str struct {
+			Foo int    `map:"X"`
+			Bar string `map:"Bar"`
+			Baz []int  `map:"C"`
+		}
+		var dst Str
+		err := Map(Str{
+			Foo: 1,
+			Bar: "2",
+			Baz: []int{3, 4, 5},
+		}, &dst)
+		assert.NoError(t, err)
+		assert.Equal(t, Str{
+			Foo: 1,
+			Bar: "2",
+			Baz: []int{3, 4, 5},
+		}, dst)
+	})
 }
 
 func TestInvalidValues(t *testing.T) {
@@ -677,6 +696,32 @@ func TestInvalidMappingErr_WithReason(t *testing.T) {
 func TestInvalidMappingErr_WithoutReason(t *testing.T) {
 	err := InvalidMappingErr{From: reflect.TypeOf(1), To: reflect.TypeOf("a")}
 	assert.Equal(t, "mapper: cannot map int to string", err.Error())
+}
+
+func Benchmark(b *testing.B) {
+	type src struct {
+		A int
+		B []int
+		C map[string]int
+		D map[string]map[string]int
+	}
+	type dst struct {
+		A string
+		B []string
+		C map[string]string
+		D map[string]map[string]string
+	}
+	s := src{
+		A: 1,
+		B: []int{1, 2, 3},
+		C: map[string]int{"foo": 1, "bar": 2},
+		D: map[string]map[string]int{"foo": {"foo": 1, "bar": 2}, "bar": {"foo": 1, "bar": 2}},
+	}
+	d := dst{}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = Map(s, &d)
+	}
 }
 
 func ptr(v any) any {
