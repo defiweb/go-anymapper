@@ -220,7 +220,7 @@ func TestMap(t *testing.T) {
 		{name: `[]int->[]any`, src: []int{1, 2, 3}, dst: ptr([]any{new(string), new(int)}), exp: []any{ptr("1"), ptr(2), 3}},
 		{name: `[]string->[]int`, src: []string{"1", "2", "3"}, dst: new([]int), exp: []int{1, 2, 3}},
 		{name: `[]string->[]int#invalid`, src: []string{"foo"}, dst: new([]int), err: true}, // error
-		{name: `[]int{1}->[]int{0,1}`, src: []int{1}, dst: ptr([]int{0, 1}), exp: []int{1, 0}},
+		{name: `[]int{1}->[]int{0,1}`, src: []int{1}, dst: ptr([]int{0, 1}), exp: []int{1}},
 		{name: `[]int{1}->[]any{}`, src: []int{1}, dst: ptr(anySlice()), exp: []any{1}},
 
 		// slice <-> array
@@ -438,31 +438,6 @@ func TestTags(t *testing.T) {
 			"foo": 1,
 		}, dst)
 	})
-	t.Run("struct-map#nested-fields", func(t *testing.T) {
-		type Src struct {
-			Foo int `map:"a.b.foo"`
-			Bar int `map:"a.b.bar"`
-			Baz int `map:"a.baz"`
-			Qux int `map:"-"`
-		}
-		var dst map[string]any
-		err := Map(Src{
-			Foo: 1,
-			Bar: 2,
-			Baz: 3,
-			Qux: 4,
-		}, &dst)
-		assert.NoError(t, err)
-		assert.Equal(t, map[string]any{
-			"a": map[string]any{
-				"b": map[string]any{
-					"foo": 1,
-					"bar": 2,
-				},
-				"baz": 3,
-			},
-		}, dst)
-	})
 	t.Run("struct-struct", func(t *testing.T) {
 		type Src struct {
 			Foo int    `map:"X"`
@@ -485,6 +460,54 @@ func TestTags(t *testing.T) {
 			A: "1",
 			B: 2,
 			C: []string{"3", "4", "5"},
+		}, dst)
+	})
+	t.Run("struct-struct#tag-src", func(t *testing.T) {
+		type Str struct {
+			Foo int    `map:"A"`
+			Bar string `map:"B"`
+			Baz []int  `map:"C"`
+		}
+		type Dst struct {
+			A int
+			B string
+			C []int
+		}
+		var dst Dst
+		err := Map(Str{
+			Foo: 1,
+			Bar: "2",
+			Baz: []int{3, 4, 5},
+		}, &dst)
+		assert.NoError(t, err)
+		assert.Equal(t, Dst{
+			A: 1,
+			B: "2",
+			C: []int{3, 4, 5},
+		}, dst)
+	})
+	t.Run("struct-struct#tag-dst", func(t *testing.T) {
+		type Str struct {
+			Foo int
+			Bar string
+			Baz []int
+		}
+		type Dst struct {
+			A int    `map:"Foo"`
+			B string `map:"Bar"`
+			C []int  `map:"Baz"`
+		}
+		var dst Dst
+		err := Map(Str{
+			Foo: 1,
+			Bar: "2",
+			Baz: []int{3, 4, 5},
+		}, &dst)
+		assert.NoError(t, err)
+		assert.Equal(t, Dst{
+			A: 1,
+			B: "2",
+			C: []int{3, 4, 5},
 		}, dst)
 	})
 	t.Run("struct-struct#same", func(t *testing.T) {
@@ -567,40 +590,40 @@ func TestCustomType(t *testing.T) {
 
 func TestCustomMapFunc(t *testing.T) {
 	type customType struct {
-		foo string
+		Foo string
 	}
 	typ := reflect.TypeOf(customType{})
 	m := DefaultMapper.Copy()
 	m.MapFrom[typ] = func(m *Mapper, src, dst reflect.Value) error {
-		return m.MapRefl(src.FieldByName("foo"), dst)
+		return m.MapRefl(src.FieldByName("Foo"), dst)
 	}
 	m.MapTo[typ] = func(m *Mapper, src, dst reflect.Value) error {
-		return m.MapRefl(src, reflect.ValueOf(&dst.Addr().Interface().(*customType).foo))
+		return m.MapRefl(src, reflect.ValueOf(&dst.Addr().Interface().(*customType).Foo))
 	}
 	t.Run("mapFrom", func(t *testing.T) {
 		var dst customType
 		require.NoError(t, m.Map("foo", &dst))
-		assert.Equal(t, "foo", dst.foo)
+		assert.Equal(t, "foo", dst.Foo)
 	})
 	t.Run("mapTo", func(t *testing.T) {
 		var dst string
-		require.NoError(t, m.Map(customType{foo: "foo"}, &dst))
+		require.NoError(t, m.Map(customType{Foo: "foo"}, &dst))
 		assert.Equal(t, "foo", dst)
 	})
 	t.Run("mapFromPtr", func(t *testing.T) {
 		var dst *customType
 		require.NoError(t, m.Map("foo", &dst))
-		assert.Equal(t, "foo", dst.foo)
+		assert.Equal(t, "foo", dst.Foo)
 	})
 	t.Run("mapToPtr", func(t *testing.T) {
 		var dst string
-		require.NoError(t, m.Map(&customType{foo: "foo"}, &dst))
+		require.NoError(t, m.Map(&customType{Foo: "foo"}, &dst))
 		assert.Equal(t, "foo", dst)
 	})
 	t.Run("both", func(t *testing.T) {
 		var dst customType
-		require.NoError(t, m.Map(customType{foo: "foo"}, &dst))
-		assert.Equal(t, "foo", dst.foo)
+		require.NoError(t, m.Map(customType{Foo: "foo"}, &dst))
+		assert.Equal(t, "foo", dst.Foo)
 	})
 }
 
@@ -625,21 +648,6 @@ func TestFieldMapper(t *testing.T) {
 	}, dst)
 }
 
-func TestCustomTagAndSeparator(t *testing.T) {
-	m := DefaultMapper.Copy()
-	m.Tag = "tag"
-	m.Separator = ":"
-	type Src struct {
-		Foo string `tag:"foo:foo"`
-	}
-	var dst map[string]any
-	err := m.Map(Src{
-		Foo: "foo",
-	}, &dst)
-	assert.NoError(t, err)
-	assert.Equal(t, map[string]any{"foo": map[string]any{"foo": "foo"}}, dst)
-}
-
 func TestEmptyTag(t *testing.T) {
 	m := DefaultMapper.Copy()
 	m.Tag = ""
@@ -654,24 +662,9 @@ func TestEmptyTag(t *testing.T) {
 	assert.Equal(t, map[string]any{"Foo": "foo"}, dst)
 }
 
-func TestEmptySeparator(t *testing.T) {
-	m := DefaultMapper.Copy()
-	m.Separator = ""
-	type Src struct {
-		Foo string `map:"foo:foo"`
-	}
-	var dst map[string]any
-	err := m.Map(Src{
-		Foo: "foo",
-	}, &dst)
-	assert.NoError(t, err)
-	assert.Equal(t, map[string]any{"foo:foo": "foo"}, dst)
-}
-
 func TestCopy(t *testing.T) {
 	cpy := DefaultMapper.Copy()
 	assert.Equal(t, DefaultMapper.Tag, cpy.Tag)
-	assert.Equal(t, DefaultMapper.Separator, cpy.Separator)
 	assert.Equal(t, DefaultMapper.ByteOrder, cpy.ByteOrder)
 	assert.Equal(t, &DefaultMapper.FieldMapper, &cpy.FieldMapper)
 	assert.Equal(t, len(DefaultMapper.MapFrom), len(cpy.MapFrom))
@@ -699,28 +692,126 @@ func TestInvalidMappingErr_WithoutReason(t *testing.T) {
 }
 
 func Benchmark(b *testing.B) {
-	type src struct {
-		A int
-		B []int
-		C map[string]int
-		D map[string]map[string]int
-	}
-	type dst struct {
-		A string
-		B []string
-		C map[string]string
-		D map[string]map[string]string
-	}
-	s := src{
-		A: 1,
-		B: []int{1, 2, 3},
-		C: map[string]int{"foo": 1, "bar": 2},
-		D: map[string]map[string]int{"foo": {"foo": 1, "bar": 2}, "bar": {"foo": 1, "bar": 2}},
-	}
-	d := dst{}
+	b.Run("StructStruct", func(b *testing.B) {
+		type src struct {
+			A int
+			B int
+			C int
+			D int
+		}
+		type dst struct {
+			A string
+			B string
+			C string
+			D string
+		}
+		s := src{
+			A: 1,
+			B: 2,
+			C: 3,
+			D: 4,
+		}
+		d := dst{}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = Map(s, &d)
+		}
+	})
+	b.Run("StructMap", func(b *testing.B) {
+		type src struct {
+			A int
+			B int
+			C int
+			D int
+		}
+		s := src{
+			A: 1,
+			B: 2,
+			C: 3,
+			D: 4,
+		}
+		d := map[string]string{}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = Map(s, &d)
+		}
+	})
+	b.Run("MapStruct", func(b *testing.B) {
+		src := map[string]int{
+			"A": 1,
+			"B": 2,
+			"C": 3,
+			"D": 4,
+		}
+		type dst struct {
+			A string
+			B string
+			C string
+			D string
+		}
+		d := dst{}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = Map(src, &d)
+		}
+	})
+	b.Run("MapMap", func(b *testing.B) {
+		src := map[string]int{
+			"A": 1,
+			"B": 2,
+			"C": 3,
+			"D": 4,
+		}
+		d := map[string]string{}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = Map(src, &d)
+		}
+	})
+	b.Run("IntSlices", func(b *testing.B) {
+		src := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+		d := []int{}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = Map(src, &d)
+		}
+	})
+}
+
+func BenchmarkIsCommonType(b *testing.B) {
+	type myInt int
+	type myString string
+	type myMap map[string]string
+	type myStruct struct{}
+	myIntTy := reflect.TypeOf(myInt(0))
+	myStringTy := reflect.TypeOf(myString(""))
+	myMapTy := reflect.TypeOf(myMap{})
+	myStructTy := reflect.TypeOf(myStruct{})
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Map(s, &d)
+		_ = isSimpleType(boolTy)
+		_ = isSimpleType(intTy)
+		_ = isSimpleType(int8Ty)
+		_ = isSimpleType(int16Ty)
+		_ = isSimpleType(int32Ty)
+		_ = isSimpleType(int64Ty)
+		_ = isSimpleType(uintTy)
+		_ = isSimpleType(uint8Ty)
+		_ = isSimpleType(uint16Ty)
+		_ = isSimpleType(uint32Ty)
+		_ = isSimpleType(uint64Ty)
+		_ = isSimpleType(float32Ty)
+		_ = isSimpleType(float64Ty)
+		_ = isSimpleType(stringTy)
+		_ = isSimpleType(anyTy)
+		_ = isSimpleType(mapToTy)
+		_ = isSimpleType(mapFromTy)
+		_ = isSimpleType(myIntTy)
+		_ = isSimpleType(myStringTy)
+		_ = isSimpleType(myMapTy)
+		_ = isSimpleType(myStructTy)
+		_ = isSimpleType(timeTy)
 	}
 }
 

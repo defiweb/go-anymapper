@@ -69,20 +69,7 @@ In addition to the above rules, the default configuration of the mapper supports
 Structures are treated by mapper as key-value maps. The mapper will try to map recursively every field of the source
 structure to the corresponding field of the destination structure or map.
 
-Field names can be overridden with a tag (whose name is defined in `Mapper.Tag`, default is `map`). The tag can contain
-a list of field names separated by `Mapper.Separator` (default is `.`). For example, the following struct:
-
-```
-type Foo struct {
-    Bar string `map:"a.b"`
-}
-```
-
-will be treated as the following map:
-
-```
-map[string]any{"a": map[string]any{"b": "bar"}}
-```
+Field names can be overridden with a tag (whose name is defined in `Mapper.Tag`, default is `map`).
 
 As a special case, if the field tag is "-", the field is always omitted.
 
@@ -178,49 +165,6 @@ func main() {
 	}
 
 	fmt.Println(b) // map[bar:42 foo:1337]
-}
-```
-
-### Nested data structures
-
-```go
-package main
-
-import (
-	"fmt"
-
-	"github.com/defiweb/go-anymapper"
-)
-
-type Point struct {
-	X, Y int
-}
-
-type Points struct {
-	P1 Point
-	P2 Point
-}
-
-type PointsFlat struct {
-	X1 int `map:"P1.X"`
-	Y1 int `map:"P1.Y"`
-	X2 int `map:"P2.X"`
-	Y2 int `map:"P2.Y"`
-}
-
-func main() {
-	a := Points{
-		P1: Point{X: 1, Y: 2},
-		P2: Point{X: 3, Y: 4},
-	}
-	b := PointsFlat{}
-
-	err := anymapper.Map(a, &b)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("%+v\n", b) // {X1:1 Y1:2 X2:3 Y2:4}
 }
 ```
 
