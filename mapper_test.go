@@ -693,47 +693,47 @@ func TestInvalidMappingErr_WithoutReason(t *testing.T) {
 
 func Benchmark(b *testing.B) {
 	b.Run("StructStruct", func(b *testing.B) {
-		type src struct {
+		type Src struct {
 			A int
 			B int
 			C int
 			D int
 		}
-		type dst struct {
+		type Dst struct {
 			A string
 			B string
 			C string
 			D string
 		}
-		s := src{
+		src := Src{
 			A: 1,
 			B: 2,
 			C: 3,
 			D: 4,
 		}
-		d := dst{}
+		dst := Dst{}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = Map(s, &d)
+			_ = Map(src, &dst)
 		}
 	})
 	b.Run("StructMap", func(b *testing.B) {
-		type src struct {
+		type Src struct {
 			A int
 			B int
 			C int
 			D int
 		}
-		s := src{
+		src := Src{
 			A: 1,
 			B: 2,
 			C: 3,
 			D: 4,
 		}
-		d := map[string]string{}
+		dst := map[string]string{}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = Map(s, &d)
+			_ = Map(src, &dst)
 		}
 	})
 	b.Run("MapStruct", func(b *testing.B) {
@@ -743,16 +743,16 @@ func Benchmark(b *testing.B) {
 			"C": 3,
 			"D": 4,
 		}
-		type dst struct {
+		type Dst struct {
 			A string
 			B string
 			C string
 			D string
 		}
-		d := dst{}
+		dst := Dst{}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = Map(src, &d)
+			_ = Map(src, &dst)
 		}
 	})
 	b.Run("MapMap", func(b *testing.B) {
@@ -762,57 +762,29 @@ func Benchmark(b *testing.B) {
 			"C": 3,
 			"D": 4,
 		}
-		d := map[string]string{}
+		dst := map[string]string{}
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = Map(src, &d)
+			_ = Map(src, &dst)
 		}
 	})
-	b.Run("IntSlices", func(b *testing.B) {
+	b.Run("IntSlice", func(b *testing.B) {
 		src := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-		d := []int{}
+		var dst []int
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_ = Map(src, &d)
+			_ = Map(src, &dst)
 		}
 	})
-}
-
-func BenchmarkIsCommonType(b *testing.B) {
-	type myInt int
-	type myString string
-	type myMap map[string]string
-	type myStruct struct{}
-	myIntTy := reflect.TypeOf(myInt(0))
-	myStringTy := reflect.TypeOf(myString(""))
-	myMapTy := reflect.TypeOf(myMap{})
-	myStructTy := reflect.TypeOf(myStruct{})
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = isSimpleType(boolTy)
-		_ = isSimpleType(intTy)
-		_ = isSimpleType(int8Ty)
-		_ = isSimpleType(int16Ty)
-		_ = isSimpleType(int32Ty)
-		_ = isSimpleType(int64Ty)
-		_ = isSimpleType(uintTy)
-		_ = isSimpleType(uint8Ty)
-		_ = isSimpleType(uint16Ty)
-		_ = isSimpleType(uint32Ty)
-		_ = isSimpleType(uint64Ty)
-		_ = isSimpleType(float32Ty)
-		_ = isSimpleType(float64Ty)
-		_ = isSimpleType(stringTy)
-		_ = isSimpleType(anyTy)
-		_ = isSimpleType(mapToTy)
-		_ = isSimpleType(mapFromTy)
-		_ = isSimpleType(myIntTy)
-		_ = isSimpleType(myStringTy)
-		_ = isSimpleType(myMapTy)
-		_ = isSimpleType(myStructTy)
-		_ = isSimpleType(timeTy)
-	}
+	b.Run("CustomTypeSlice", func(b *testing.B) {
+		type MyInt int
+		src := []MyInt{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+		var dst []int
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = Map(src, &dst)
+		}
+	})
 }
 
 func ptr(v any) any {
