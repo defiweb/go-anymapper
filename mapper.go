@@ -159,6 +159,14 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 		SrcType: src,
 		DstType: dst,
 	}
+
+	// If destination type is an any interface, map the value directly using
+	// reflect.Set or if the destination type has a value, map to that type.
+	if dst == anyTy {
+		tm.MapFunc = mapAny
+		return
+	}
+
 	var isSrcSimple, isDstSimple, sameTypes bool
 	if src == dst {
 		isSrcSimple = isSimpleType(src)
@@ -171,7 +179,7 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 
 	// If both types are simple, e.g. int, string, etc. map the value directly
 	// using reflect.Set.
-	if (sameTypes && isSrcSimple) || dst == anyTy {
+	if sameTypes && isSrcSimple {
 		tm.MapFunc = mapDirect
 		return
 	}
@@ -373,6 +381,19 @@ func implMapTo(t reflect.Type) bool {
 func implMapFrom(t reflect.Type) bool {
 	_, ok := reflect.Zero(t).Interface().(MapFrom)
 	return ok
+}
+
+func mapAny(m *Mapper, src, dst reflect.Value) error {
+	if dst.Kind() == reflect.Interface && !dst.IsNil() && !dst.Elem().CanSet() {
+		aux := reflect.New(dst.Elem().Type())
+		if err := m.MapRefl(src, aux); err != nil {
+			return NewInvalidMappingError(src.Type(), dst.Type(), "")
+		}
+		dst.Set(aux.Elem())
+		return nil
+	}
+	dst.Set(src)
+	return nil
 }
 
 func mapDirect(_ *Mapper, src, dst reflect.Value) error {

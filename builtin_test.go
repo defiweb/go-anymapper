@@ -240,6 +240,7 @@ func TestBuiltInTypes(t *testing.T) {
 
 		// slice <-> slice
 		{name: `[]byte("foo")->[]byte`, src: []byte("foo"), dst: new([]byte), exp: []byte("foo")},
+		{name: `[]int{1,2,3}->any{0,"0",0.0}`, src: []int{1, 2, 3}, dst: ptr([]any{0, "0", 0.0}), exp: []any{1, "2", 3.0}},
 		{name: `[]int{1,2,3}->make([]uint8,0,3)`, src: []int{1, 2, 3}, dst: ptr(make([]uint8, 0, 3)), exp: []uint8{1, 2, 3}},
 		{name: `[]int->[]string`, src: []int{1, 2, 3}, dst: new([]string), exp: []string{"1", "2", "3"}},
 		{name: `[]string->[]int`, src: []string{"1", "2", "3"}, dst: new([]int), exp: []int{1, 2, 3}},

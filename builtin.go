@@ -435,9 +435,11 @@ func mapByteArrayToString(_ *Mapper, src, dst reflect.Value) error {
 }
 
 func mapSliceToSlice(m *Mapper, src, dst reflect.Value) error {
-	srcTyp := src.Type().Elem()
-	dstTyp := dst.Type().Elem()
-	mapper := m.mapperFor(srcTyp, dstTyp)
+	mapper := m.mapperFor(src.Type().Elem(), dst.Type().Elem())
+	if src.Type() == dst.Type() && dst.CanSet() {
+		dst.Set(src)
+		return nil
+	}
 	if src.Len() > dst.Len() {
 		if dst.Cap() >= src.Len() {
 			dst.SetLen(src.Len())
@@ -450,11 +452,13 @@ func mapSliceToSlice(m *Mapper, src, dst reflect.Value) error {
 	}
 	for i := 0; i < src.Len(); i++ {
 		srcVal := m.srcValue(src.Index(i))
-		dstVal := m.dstValue(reflect.New(dstTyp))
+		dstVal := m.dstValue(dst.Index(i))
+		if !mapper.match(srcVal.Type(), dstVal.Type()) {
+			mapper = m.mapperFor(srcVal.Type(), dstVal.Type())
+		}
 		if err := mapper.mapRefl(m, srcVal, dstVal); err != nil {
 			return err
 		}
-		dst.Index(i).Set(dstVal)
 	}
 	dst.SetLen(src.Len())
 	return nil
@@ -477,11 +481,13 @@ func mapSliceToArray(m *Mapper, src, dst reflect.Value) error {
 	}
 	for i := 0; i < src.Len(); i++ {
 		srcVal := m.srcValue(src.Index(i))
-		dstVal := m.dstValue(reflect.New(dstTyp))
-		if err := mapper.mapRefl(m, srcVal, dstVal); err != nil {
+		dstVal := m.dstValue(dst.Index(i))
+		if !mapper.match(srcVal.Type(), dstVal.Type()) {
+			mapper = m.mapperFor(srcVal.Type(), dstVal.Type())
+		}
+		if err := mapper.mapRefl(m, m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
 			return err
 		}
-		dst.Index(i).Set(dstVal)
 	}
 	for i := src.Len(); i < dst.Len(); i++ {
 		dst.Index(i).Set(reflect.Zero(dst.Type().Elem()))
@@ -509,11 +515,13 @@ func mapArrayToSlice(m *Mapper, src, dst reflect.Value) error {
 		}
 		for i := 0; i < src.Len(); i++ {
 			srcVal := m.srcValue(src.Index(i))
-			dstVal := m.dstValue(reflect.New(dstTyp))
+			dstVal := m.dstValue(dst.Index(i))
+			if !mapper.match(srcVal.Type(), dstVal.Type()) {
+				mapper = m.mapperFor(srcVal.Type(), dstVal.Type())
+			}
 			if err := mapper.mapRefl(m, srcVal, dstVal); err != nil {
 				return err
 			}
-			dst.Index(i).Set(dstVal)
 		}
 		dst.SetLen(src.Len())
 	}
@@ -537,11 +545,13 @@ func mapArrayToArray(m *Mapper, src, dst reflect.Value) error {
 	}
 	for i := 0; i < src.Len(); i++ {
 		srcVal := m.srcValue(src.Index(i))
-		dstVal := m.dstValue(reflect.New(dstTyp))
+		dstVal := m.dstValue(dst.Index(i))
+		if !mapper.match(srcVal.Type(), dstVal.Type()) {
+			mapper = m.mapperFor(srcVal.Type(), dstVal.Type())
+		}
 		if err := mapper.mapRefl(m, srcVal, dstVal); err != nil {
 			return err
 		}
-		dst.Index(i).Set(dstVal)
 	}
 	return nil
 }
@@ -589,9 +599,6 @@ func mapMapToMap(m *Mapper, src, dst reflect.Value) error {
 		sameKeys   = srcKeyTyp == dstKeyTyp
 		sameElems  = srcElemTyp == dstElemTyp
 	)
-	if dst.Len() > 0 {
-		dst.Set(reflect.MakeMap(dst.Type()))
-	}
 	for _, srcKey := range src.MapKeys() {
 		dstKey := srcKey
 		if !sameKeys {
@@ -603,11 +610,27 @@ func mapMapToMap(m *Mapper, src, dst reflect.Value) error {
 		if sameElems && dst.CanSet() {
 			dst.SetMapIndex(dstKey, src.MapIndex(srcKey))
 		} else {
-			aux := reflect.New(dstElemTyp).Elem()
-			if err := elemMapper.mapRefl(m, m.srcValue(src.MapIndex(srcKey)), m.dstValue(aux)); err != nil {
-				return err
+			srcVal := m.srcValue(src.MapIndex(srcKey))
+			dstVal := m.dstValue(dst.MapIndex(dstKey))
+			srcTyp := srcVal.Type()
+			dstTyp := dstVal.Type()
+			if dstVal.IsValid() {
+				if !elemMapper.match(srcTyp, dstTyp) {
+					elemMapper = m.mapperFor(srcTyp, dstTyp)
+				}
+				if err := elemMapper.mapRefl(m, srcVal, dstVal); err != nil {
+					return err
+				}
+			} else {
+				aux := reflect.New(dstElemTyp).Elem()
+				if !elemMapper.match(srcTyp, aux.Type()) {
+					elemMapper = m.mapperFor(srcTyp, aux.Type())
+				}
+				if err := elemMapper.mapRefl(m, src, m.dstValue(aux)); err != nil {
+					return err
+				}
+				dst.SetMapIndex(dstKey, aux)
 			}
-			dst.SetMapIndex(dstKey, aux)
 		}
 	}
 	return nil
@@ -682,8 +705,6 @@ func mapStructsOfDifferentTypes(m *Mapper, src, dst reflect.Value) error {
 					return err
 				}
 			}
-		} else {
-			dstVal.Set(reflect.Zero(dstVal.Type()))
 		}
 	}
 	return nil
@@ -695,9 +716,6 @@ func mapStructToMap(m *Mapper, src, dst reflect.Value) error {
 		dstTyp = dst.Type().Elem()
 		srcNum = src.Type().NumField()
 	)
-	if dst.Len() > 0 {
-		dst.Set(reflect.MakeMap(dst.Type()))
-	}
 	for i := 0; i < srcNum; i++ {
 		srcFld := src.Type().Field(i)
 		if !srcFld.IsExported() {
@@ -712,14 +730,24 @@ func mapStructToMap(m *Mapper, src, dst reflect.Value) error {
 		if srcFld.Type == dstTyp && isSimpleType(srcFld.Type) {
 			dst.SetMapIndex(key, srcVal)
 		} else {
-			aux := reflect.New(dstTyp).Elem()
-			if !mapper.match(srcVal.Type(), aux.Type()) {
-				mapper = m.mapperFor(srcVal.Type(), aux.Type())
+			dstVal := m.dstValue(dst.MapIndex(key))
+			if dstVal.IsValid() {
+				if !mapper.match(srcVal.Type(), dstVal.Type()) {
+					mapper = m.mapperFor(srcVal.Type(), dstVal.Type())
+				}
+				if err := mapper.mapRefl(m, srcVal, dstVal); err != nil {
+					return err
+				}
+			} else {
+				aux := reflect.New(dstTyp).Elem()
+				if !mapper.match(srcVal.Type(), aux.Type()) {
+					mapper = m.mapperFor(srcVal.Type(), aux.Type())
+				}
+				if err := mapper.mapRefl(m, srcVal, aux); err != nil {
+					return err
+				}
+				dst.SetMapIndex(key, aux)
 			}
-			if err := mapper.mapRefl(m, srcVal, aux); err != nil {
-				return err
-			}
-			dst.SetMapIndex(key, aux)
 		}
 	}
 	return nil

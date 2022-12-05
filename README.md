@@ -42,6 +42,9 @@ shorter than the source, the mapper will append new elements to the destination 
 When mapping numbers from a byte slice or array, the length of the slice/array *must* be the same as the size of the
 variable in bytes. The size of `int`, `uint` is always considered as 64 bits.
 
+When mapping to slices, arrays or maps, the mapper will try to reuse the existing elements of the destination
+if possible. For example, mapping `[]int{1, 2}` to `[]any{"", 0}` will result in `[]any{"1", 2}`.
+
 In addition to the above rules, the default configuration of the mapper supports the following conversions:
 
 - `time.Time` ⇔ `string` ⇒ converts string to or from time using RFC3339 format.
