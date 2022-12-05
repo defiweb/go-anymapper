@@ -1,12 +1,14 @@
 # go-anymapper
 
-The `go-anymapper` package helps you map anything to anything! It can map data between simple Go types such as:
-`string`, `int`, and data structures. It also allows you to define your own mapping functions for any type.
+The `go-anymapper` package is a fast and convenient tool for mapping data between different types, including basic Go
+types like strings and integers, as well as more complex data structures. It allows you to create custom mapping rules
+to fit the unique requirements of your application. This means you can use `go-anymapper` to easily convert data in the
+most useful way for your specific needs.
 
 ## Installation
 
 ```bash
-go get github.com/defiweb/go-anymapper
+go get -u github.com/defiweb/go-anymapper
 ```
 
 ## Usage
@@ -39,9 +41,6 @@ shorter than the source, the mapper will append new elements to the destination 
 
 When mapping numbers from a byte slice or array, the length of the slice/array *must* be the same as the size of the
 variable in bytes. The size of `int`, `uint` is always considered as 64 bits.
-
-When mapping to slices, arrays or maps, the mapper will try to reuse the existing elements of the destination
-if possible. For example, mapping `[]int{1, 2}` to `[]any{"", 0}` will result in `[]any{"1", 2}`.
 
 In addition to the above rules, the default configuration of the mapper supports the following conversions:
 
@@ -78,14 +77,19 @@ If the tag is not set, struct field names will be mapped using the `Mapper.Field
 Tags can be defined for both source and target structures. In this case, the names used in the tags must be the same for
 both structures.
 
+If destination structure has fields that are not present in the source structure, the mapper will set zero values for
+those fields.
+
 ### Strict types
 
-It is possible to enforce strict type checking by setting `Mapper.StrictTypes` to `true`. If enabled, the source and
-destination types must be exactly the same for the mapping to be possible. Although, mapping between different data
-structures, like `struct` ⇔ `struct`, `struct` ⇔ `map` and `map` ⇔ `map` is always possible. If the destination type is
-an empty interface, the source value will be assigned to it regardless of the value of `Mapper.StrictTypes`.
+If Mapper.StrictTypes is set to true, strict type checking will be enforced for the mapping process. This means that the
+source and destination types must be exactly the same for the mapping to be successful. However, mapping between
+different data structures, such as `struct` ⇔ `struct`, `struct` ⇔ `map` and `map` ⇔ `map` is always allowed. If the
+destination type is an empty interface, the source value will be assigned to it regardless of the strict type check
+setting.
 
-The strict type check also applies to custom types, for example, `type MyInt int` will not be treated as `int` anymore.
+Additionally, the strict type check applies to custom types as well. For example, a custom type `type MyInt int` will
+not be treated as `int` anymore.
 
 ### `MapTo` and `MapFrom` interfaces:
 
@@ -98,14 +102,17 @@ destination value.
 If the destination value implements `MapFrom` interface, the `MapFrom` method will be used to map the source value to
 the destination value.
 
-If both source and destination values implement the `MapTo` and `MapFrom` interfaces then `MapTo` will be used
-first, then `MapFrom` if the first one fails.
+If both source and destination values implement the `MapTo` and `MapFrom` interfaces then only `MapTo` will be used.
 
-### `Mapper.MapTo` and `Mapper.MapFrom` maps:
+### Custom mapping functions
 
-If it is not possible to implement the above interfaces, the custom mapping functions can be registered with the
-`Mapper.MapTo` and `Mapper.MapFrom` maps. The keys of these maps are the types of the destination and source values
-respectively. The values are the mapping functions.
+If it is not possible to implement the above interfaces, custom mapping functions can be registered with the
+`Mapper.Mapper` map. The keys of this map are the types of the destination or source values, and the values are
+functions that return a `MapFunc` function that can map the source value to the destination value.
+
+If the function returns a `nil` value, it means that the mapping is not possible. If both the source and destination
+types are registered, the source type will be used first. If it returns a nil value, the destination type will be used.
+If neither of them returns a `nil` value, the mapping will fail.
 
 ### Default mapper instance
 
@@ -208,7 +215,7 @@ func main() {
 }
 ```
 
-### MapFrom and MapTo maps
+### Custom mapping function
 
 ```go
 package main
@@ -230,15 +237,18 @@ func main() {
 	var b Val
 
 	typ := reflect.TypeOf(Val{})
-	anymapper.DefaultMapper.MapFrom[typ] = func(m *anymapper.Mapper, src, dst reflect.Value) error {
-		x := src.FieldByName("X")
-		if x.IsNil() {
-			return m.MapRefl(reflect.ValueOf(0), dst)
+	anymapper.DefaultMapper.Mappers[typ] = func(m *anymapper.Mapper, src, dst reflect.Type) anymapper.MapFunc {
+		if src == typ {
+			return func(m *anymapper.Mapper, src, dst reflect.Value) error {
+				return m.MapRefl(src.FieldByName("X"), dst)
+			}
 		}
-		return m.MapRefl(src.FieldByName("X"), dst)
-	}
-	anymapper.DefaultMapper.MapTo[typ] = func(m *anymapper.Mapper, src, dst reflect.Value) error {
-		return m.MapRefl(src, dst.FieldByName("X").Addr())
+		if dst == typ {
+			return func(m *anymapper.Mapper, src, dst reflect.Value) error {
+				return m.MapRefl(src, reflect.ValueOf(&dst.Addr().Interface().(*Val).X))
+			}
+		}
+		return nil
 	}
 
 	err := anymapper.Map(a, &b)

@@ -1,15 +1,12 @@
 package anymapper
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
-	"math/big"
 	"reflect"
-	"strconv"
 	"strings"
+	"sync"
 )
 
 // MapTo interface is implemented by types that can map themselves to
@@ -26,6 +23,15 @@ type MapFrom interface {
 	MapFrom(m *Mapper, src reflect.Value) error
 }
 
+// MapFuncProvider is a function that returns a MapFunc for given src and dst
+// types. If mapping is not supported, it returns nil.
+type MapFuncProvider func(m *Mapper, src, dst reflect.Type) MapFunc
+
+// MapFunc is a function that maps a src value to a dst value. It returns an
+// error if the mapping is not possible. The src and dst values are never
+// pointers.
+type MapFunc func(m *Mapper, src, dst reflect.Value) error
+
 // DefaultMapper is the default Mapper used by the Map and MapRefl functions.
 // It also provides additional mapping rules for time.Time, big.Int, big.Float
 // and big.Rat. It can be modified to change the default behavior, but if the
@@ -34,24 +40,14 @@ type MapFrom interface {
 var DefaultMapper = &Mapper{
 	Tag:       `map`,
 	ByteOrder: binary.BigEndian,
-	MapFrom: map[reflect.Type]MapFunc{
-		timeTy:     mapTimeSrc,
-		bigIntTy:   mapBigIntSrc,
-		bigFloatTy: mapBigFloatSrc,
-		bigRatTy:   mapBigRatSrc,
+	Mappers: map[reflect.Type]MapFuncProvider{
+		timeTy:     timeTypeMapper,
+		bigIntTy:   bigIntTypeMapper,
+		bigFloatTy: bigFloatTypeMapper,
+		bigRatTy:   bigRatTypeMapper,
 	},
-	MapTo: map[reflect.Type]MapFunc{
-		timeTy:     mapTimeDst,
-		bigIntTy:   mapBigIntDst,
-		bigFloatTy: mapBigFloatDst,
-		bigRatTy:   mapBigRatDst,
-	},
+	cacheMap: make(map[typePair]*typeMapper, 0),
 }
-
-// MapFunc is a function that maps a src value to a dst value. It returns an
-// error if the mapping is not possible. The src and dst values are never
-// pointers.
-type MapFunc func(m *Mapper, src, dst reflect.Value) error
 
 // Mapper hold the mapper configuration.
 type Mapper struct {
@@ -66,19 +62,29 @@ type Mapper struct {
 	// it is used only when the tag is not present.
 	FieldMapper func(string) string
 
-	// ByteOrder is the byte order used to map data to and from byte slices.
+	// Mappers is a map of custom mapper providers. The key is the type that
+	// the mapper can map to and from. The value is a function that returns
+	// a MapFunc that maps the source type to the destination type. Provider
+	// can return nil if the mapping is not possible.
+	//
+	// If both source and destination types have defined providers, then
+	// the provider for source value is used first, and if it returns nil,
+	// then the provider for destination value is used.
+	Mappers map[reflect.Type]MapFuncProvider
+
+	// ByteOrder is the byte order used to map numbers to and from byte slices.
 	ByteOrder binary.ByteOrder
 
-	// MapTo is a map of types that can map themselves to another type.
-	MapTo map[reflect.Type]MapFunc
+	// DisableCache disables the cache of the type mappers.
+	DisableCache bool
 
-	// MapFrom is a map of types that can map themselves from another type.
-	MapFrom map[reflect.Type]MapFunc
+	cacheMu  sync.Mutex
+	cacheMap map[typePair]*typeMapper
 }
 
 // Map maps the source value to the destination value.
 //
-// It is shorthand for DefaultMapper.Map(src, dst).
+// It is shorthand for DefaultMapper.mapRefl(src, dst).
 func Map(src, dst any) error {
 	return DefaultMapper.Map(src, dst)
 }
@@ -92,12 +98,28 @@ func MapRefl(src, dst reflect.Value) error {
 
 // Map maps the source value to the destination value.
 func (m *Mapper) Map(src, dst any) error {
-	return m.mapRefl(m.srcValue(reflect.ValueOf(src)), m.dstValue(reflect.ValueOf(dst)))
+	srcVal := m.srcValue(reflect.ValueOf(src))
+	dstVal := m.dstValue(reflect.ValueOf(dst))
+	if !srcVal.IsValid() {
+		return InvalidSrcErr
+	}
+	if !dstVal.IsValid() {
+		return InvalidDstErr
+	}
+	return m.mapperFor(srcVal.Type(), dstVal.Type()).mapRefl(m, srcVal, dstVal)
 }
 
 // MapRefl maps the source value to the destination value.
 func (m *Mapper) MapRefl(src, dst reflect.Value) error {
-	return m.mapRefl(m.srcValue(src), m.dstValue(dst))
+	srcVal := m.srcValue(src)
+	dstVal := m.dstValue(dst)
+	if !srcVal.IsValid() {
+		return InvalidSrcErr
+	}
+	if !dstVal.IsValid() {
+		return InvalidDstErr
+	}
+	return m.mapperFor(srcVal.Type(), dstVal.Type()).mapRefl(m, srcVal, dstVal)
 }
 
 // Copy creates a copy of the current Mapper with the same configuration.
@@ -106,636 +128,97 @@ func (m *Mapper) Copy() *Mapper {
 		Tag:         m.Tag,
 		FieldMapper: m.FieldMapper,
 		ByteOrder:   m.ByteOrder,
+		cacheMap:    make(map[typePair]*typeMapper, 0),
 	}
-	if m.MapFrom != nil {
-		cpy.MapFrom = make(map[reflect.Type]MapFunc)
-		for k, v := range m.MapFrom {
-			cpy.MapFrom[k] = v
-		}
-	}
-	if m.MapTo != nil {
-		cpy.MapTo = make(map[reflect.Type]MapFunc)
-		for k, v := range m.MapTo {
-			cpy.MapTo[k] = v
+	if m.Mappers != nil {
+		cpy.Mappers = make(map[reflect.Type]MapFuncProvider)
+		for k, v := range m.Mappers {
+			cpy.Mappers[k] = v
 		}
 	}
 	return cpy
 }
 
-func (m *Mapper) mapRefl(src, dst reflect.Value) error {
-	if !src.IsValid() {
-		return InvalidSrcErr
+// mapperFor returns the typeMapper that can map values of the given types.
+// If mapping is not possible, the returned typeMapper has a nil MapFunc.
+func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
+	// Try to find a mapper in the cache.
+	if !m.DisableCache {
+		m.cacheMu.Lock()
+		if v, ok := m.cacheMap[typePair{src: src, dst: dst}]; ok {
+			m.cacheMu.Unlock()
+			return v
+		}
+		defer func() {
+			m.cacheMap[typePair{src: src, dst: dst}] = tm
+			m.cacheMu.Unlock()
+		}()
 	}
-	if !dst.IsValid() {
-		return InvalidDstErr
-	}
-	if canSetDirectly(src.Type(), dst.Type()) && dst.CanSet() {
-		dst.Set(src)
-		return nil
-	}
-	if ok, err := m.mapFunc(src, dst); ok {
-		return err
-	}
-	switch src.Kind() {
-	case reflect.Bool:
-		return m.mapBool(src, dst)
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return m.mapInt(src, dst)
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return m.mapUint(src, dst)
-	case reflect.Float32, reflect.Float64:
-		return m.mapFloat(src, dst)
-	case reflect.String:
-		return m.mapString(src, dst)
-	case reflect.Slice:
-		return m.mapSlice(src, dst)
-	case reflect.Array:
-		return m.mapArray(src, dst)
-	case reflect.Map:
-		return m.mapMap(src, dst)
-	case reflect.Struct:
-		return m.mapStruct(src, dst)
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
 
-// mapFunc tries to map the source value to the destination value using the
-// MapFrom and MapTo interfaces, and the MapFrom and MapTo maps.
-//
-// It tries to use every defined mapping function until one of them succeeds.
-// If no mapping function succeeds, it returns an error from the last mapping
-// function that was tried.
-func (m *Mapper) mapFunc(src, dst reflect.Value) (ok bool, err error) {
-	isSrcSimpleType := isSimpleType(src.Type())
-	isDstSimpleType := isSimpleType(dst.Type())
-	if !isSrcSimpleType {
-		mapTo, ok := src.Interface().(MapTo)
-		if ok {
-			if err = mapTo.MapTo(m, dst); err == nil {
-				return true, nil
-			}
-		}
+	tm = &typeMapper{
+		SrcType: src,
+		DstType: dst,
 	}
-	if !isDstSimpleType {
-		mapFrom, ok := dst.Interface().(MapFrom)
-		if ok {
-			if err = mapFrom.MapFrom(m, src); err == nil {
-				return true, nil
-			}
-		}
-	}
-	if !isDstSimpleType {
-		if f, ok := m.MapTo[dst.Type()]; ok {
-			if err = f(m, src, dst); err == nil {
-				return true, nil
-			}
-		}
-	}
-	if !isSrcSimpleType {
-		if f, ok := m.MapFrom[src.Type()]; ok {
-			if err = f(m, src, dst); err == nil {
-				return true, nil
-			}
-		}
-	}
-	if err != nil {
-		// If the error is not nil, it means that there was a mapping rule
-		// defined, but it failed.
-		return true, err
-	}
-	return false, err
-}
-
-func (m *Mapper) mapBool(src, dst reflect.Value) error {
-	if m.StrictTypes && src.Type() != dst.Type() {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "strict mode")
-	}
-	switch dst.Kind() {
-	case reflect.Bool:
-		dst.SetBool(src.Bool())
-		return nil
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if src.Bool() {
-			dst.SetInt(1)
-		} else {
-			dst.SetInt(0)
-		}
-		return nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if src.Bool() {
-			dst.SetUint(1)
-		} else {
-			dst.SetUint(0)
-		}
-		return nil
-	case reflect.Float32, reflect.Float64:
-		if src.Bool() {
-			dst.SetFloat(1)
-		} else {
-			dst.SetFloat(0)
-		}
-		return nil
-	case reflect.String:
-		if src.Bool() {
-			dst.SetString("true")
-		} else {
-			dst.SetString("false")
-		}
-		return nil
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapInt(src, dst reflect.Value) error {
-	if m.StrictTypes && src.Type() != dst.Type() {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "strict mode")
-	}
-	switch dst.Kind() {
-	case reflect.Bool:
-		dst.SetBool(src.Int() != 0)
-		return nil
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if dst.OverflowInt(src.Int()) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetInt(src.Int())
-		return nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n := src.Int()
-		if n < 0 || dst.OverflowUint(uint64(n)) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetUint(uint64(n))
-		return nil
-	case reflect.Float32, reflect.Float64:
-		dst.SetFloat(float64(src.Int()))
-		return nil
-	case reflect.String:
-		dst.SetString(strconv.FormatInt(src.Int(), 10))
-		return nil
-	case reflect.Slice, reflect.Array:
-		if dst.Type().Elem().Kind() == reflect.Uint8 {
-			return m.toBytes(src, dst)
-		}
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapUint(src, dst reflect.Value) error {
-	if m.StrictTypes && src.Type() != dst.Type() {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "strict mode")
-	}
-	switch dst.Kind() {
-	case reflect.Bool:
-		dst.SetBool(src.Uint() != 0)
-		return nil
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n := src.Uint()
-		if n > uint64(math.MaxInt64) || dst.OverflowInt(int64(n)) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetInt(int64(n))
-		return nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if dst.OverflowUint(src.Uint()) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetUint(src.Uint())
-		return nil
-	case reflect.Float32, reflect.Float64:
-		dst.SetFloat(float64(src.Uint()))
-		return nil
-	case reflect.String:
-		dst.SetString(strconv.FormatUint(src.Uint(), 10))
-		return nil
-	case reflect.Slice, reflect.Array:
-		if dst.Type().Elem().Kind() == reflect.Uint8 {
-			return m.toBytes(src, dst)
-		}
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapFloat(src, dst reflect.Value) error {
-	if m.StrictTypes && src.Type() != dst.Type() {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "strict mode")
-	}
-	switch dst.Kind() {
-	case reflect.Bool:
-		dst.SetBool(src.Float() != 0)
-		return nil
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n := src.Float()
-		if n < math.MinInt64 || n > math.MaxInt64 || dst.OverflowInt(int64(n)) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetInt(int64(n))
-		return nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n := src.Float()
-		if n < 0 || n > math.MaxUint64 || dst.OverflowUint(uint64(n)) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetUint(uint64(n))
-		return nil
-	case reflect.Float32, reflect.Float64:
-		n := src.Float()
-		if dst.OverflowFloat(n) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetFloat(n)
-		return nil
-	case reflect.String:
-		dst.SetString(strconv.FormatFloat(src.Float(), 'f', -1, 64))
-		return nil
-	case reflect.Slice, reflect.Array:
-		return m.toBytes(src, dst)
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapString(src, dst reflect.Value) error {
-	if m.StrictTypes && src.Type() != dst.Type() {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "strict mode")
-	}
-	switch dst.Kind() {
-	case reflect.Bool:
-		switch src.String() {
-		case "true":
-			dst.SetBool(true)
-			return nil
-		case "false":
-			dst.SetBool(false)
-			return nil
-		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n, ok := new(big.Int).SetString(src.String(), 0)
-		if !ok {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "invalid number")
-		}
-		if !n.IsInt64() || dst.OverflowInt(n.Int64()) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetInt(n.Int64())
-		return nil
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		n, ok := new(big.Int).SetString(src.String(), 0)
-		if !ok {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "invalid number")
-		}
-		if !n.IsUint64() || dst.OverflowUint(n.Uint64()) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetUint(n.Uint64())
-		return nil
-	case reflect.Float32, reflect.Float64:
-		bn, ok := new(big.Float).SetString(src.String())
-		if !ok {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "invalid number")
-		}
-		n, a := bn.Float64()
-		if dst.OverflowFloat(n) || (math.IsInf(n, 0) && (a == big.Below || a == big.Above)) {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
-		}
-		dst.SetFloat(n)
-		return nil
-	case reflect.String:
-		dst.SetString(src.String())
-		return nil
-	case reflect.Slice:
-		if dst.Type().Elem().Kind() == reflect.Uint8 {
-			dst.SetBytes([]byte(src.String()))
-			return nil
-		}
-	case reflect.Array:
-		if dst.Type().Elem().Kind() == reflect.Uint8 {
-			b := []byte(src.String())
-			if len(b) != dst.Len() {
-				return NewInvalidMappingError(src.Type(), dst.Type(), "length mismatch")
-			}
-			for i := 0; i < len(b); i++ {
-				dst.Index(i).SetUint(uint64(b[i]))
-			}
-			return nil
-		}
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapSlice(src, dst reflect.Value) error {
-	if m.StrictTypes && src.Type() != dst.Type() && dst.Kind() != reflect.Map {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "strict mode")
-	}
-	switch dst.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		if src.Type().Elem().Kind() == reflect.Uint8 {
-			return m.fromBytes(src.Bytes(), dst)
-		}
-	case reflect.String:
-		if src.Type().Elem().Kind() == reflect.Uint8 {
-			dst.SetString(string(src.Bytes()))
-			return nil
-		}
-	case reflect.Slice:
-		return m.mapSliceToSlice(src, dst)
-	case reflect.Array:
-		return m.mapSliceToArray(src, dst)
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapArray(src, dst reflect.Value) error {
-	if m.StrictTypes && src.Type() != dst.Type() {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "strict mode")
-	}
-	switch dst.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		if src.Type().Elem().Kind() == reflect.Uint8 {
-			b := make([]byte, src.Len())
-			for i := 0; i < src.Len(); i++ {
-				b[i] = byte(src.Index(i).Uint())
-			}
-			return m.fromBytes(b, dst)
-		}
-	case reflect.String:
-		if src.Type().Elem().Kind() == reflect.Uint8 {
-			b := make([]byte, src.Len())
-			for i := 0; i < src.Len(); i++ {
-				b[i] = byte(src.Index(i).Uint())
-			}
-			dst.SetString(string(b))
-			return nil
-		}
-	case reflect.Slice:
-		return m.mapArrayToSlice(src, dst)
-	case reflect.Array:
-		return m.mapArrayToArray(src, dst)
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapMap(src, dst reflect.Value) error {
-	switch dst.Kind() {
-	case reflect.Map:
-		return m.mapMapToMap(src, dst)
-	case reflect.Struct:
-		return m.mapMapToStruct(src, dst)
-	}
-	return fmt.Errorf("mapper: cannot map map to %v", dst.Type())
-}
-
-func (m *Mapper) mapStruct(src, dst reflect.Value) error {
-	switch dst.Kind() {
-	case reflect.Struct:
-		return m.mapStructToStruct(src, dst)
-	case reflect.Map:
-		return m.mapStructToMap(src, dst)
-	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
-}
-
-func (m *Mapper) mapSliceToSlice(src, dst reflect.Value) error {
-	if dst.Len() > 0 {
-		if src.Len() > dst.Len() {
-			dst.Set(reflect.AppendSlice(
-				dst,
-				reflect.MakeSlice(dst.Type(), src.Len()-dst.Len(), src.Len()-dst.Len())),
-			)
-		}
-		for i := 0; i < src.Len(); i++ {
-			if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
-				return err
-			}
-		}
-		dst.SetLen(src.Len())
+	var isSrcSimple, isDstSimple, sameTypes bool
+	if src == dst {
+		isSrcSimple = isSimpleType(src)
+		isDstSimple = isSrcSimple
+		sameTypes = true
 	} else {
-		if canSetDirectly(src.Type(), dst.Type()) {
-			dst.Set(src)
-		} else {
-			dst.Set(reflect.MakeSlice(dst.Type(), src.Len(), src.Cap()))
-			for i := 0; i < src.Len(); i++ {
-				if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
-					return err
-				}
-			}
-		}
+		isSrcSimple = isSimpleType(src)
+		isDstSimple = isSimpleType(dst)
 	}
-	return nil
-}
 
-func (m *Mapper) mapSliceToArray(src, dst reflect.Value) error {
-	if src.Len() != dst.Len() {
-		return NewInvalidMappingError(
-			src.Type(),
-			dst.Type(),
-			fmt.Sprintf("length mismatch: %d != %d", src.Len(), dst.Len()),
-		)
+	// If both types are simple, e.g. int, string, etc. map the value directly
+	// using reflect.Set.
+	if (sameTypes && isSrcSimple) || dst == anyTy {
+		tm.MapFunc = mapDirect
+		return
 	}
-	if canSetDirectly(src.Type().Elem(), dst.Type().Elem()) {
-		reflect.Copy(dst, src)
-	} else {
-		for i := 0; i < src.Len(); i++ {
-			if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
-				return err
-			}
-		}
-		for i := src.Len(); i < dst.Len(); i++ {
-			dst.Index(i).Set(reflect.Zero(dst.Type().Elem()))
-		}
-	}
-	return nil
-}
 
-func (m *Mapper) mapArrayToSlice(src, dst reflect.Value) error {
-	if canSetDirectly(src.Type().Elem(), dst.Type().Elem()) {
-		dst.Set(reflect.MakeSlice(dst.Type(), src.Len(), src.Len()))
-		reflect.Copy(dst, src)
-	} else {
-		if src.Len() > dst.Len() {
-			dst.Set(reflect.AppendSlice(
-				dst,
-				reflect.MakeSlice(dst.Type(), src.Len()-dst.Len(), src.Len()-dst.Len())),
-			)
-		}
-		for i := 0; i < src.Len(); i++ {
-			if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
-				return err
-			}
-		}
-		dst.SetLen(src.Len())
+	// If src or dst implements MapTo or MapFrom, use the interface methods to
+	// map the value.
+	if !isSrcSimple && implMapTo(src) {
+		tm.MapFunc = mapToInterface
+		return
 	}
-	return nil
-}
+	if !isDstSimple && !sameTypes && implMapFrom(dst) {
+		tm.MapFunc = mapFromInterface
+		return
+	}
 
-func (m *Mapper) mapArrayToArray(src, dst reflect.Value) error {
-	if canSetDirectly(src.Type(), dst.Type()) {
-		dst.Set(src)
-		return nil
+	// Try to find a mapper using mapper providers. It looks for providers
+	// for src and dst types. First it tries to use providers for src. If
+	// it returns a mapper, it uses it. If it returns nil, it tries to use
+	// providers for dst. If both return nil, then mapping is not possible.
+	var srcMapper, dstMapper MapFuncProvider
+	var hasSrcMapper, hasDstMapper bool
+	if !isSrcSimple {
+		srcMapper, hasSrcMapper = m.Mappers[src]
 	}
-	if src.Len() != dst.Len() {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "length mismatch")
-	}
-	for i := 0; i < src.Len(); i++ {
-		if err := m.mapRefl(m.srcValue(src.Index(i)), m.dstValue(dst.Index(i))); err != nil {
-			return err
+	if hasSrcMapper {
+		tm.MapFunc = srcMapper(m, src, dst)
+		if tm.MapFunc != nil {
+			return
 		}
 	}
-	return nil
-}
+	if !sameTypes && !isDstSimple {
+		dstMapper, hasDstMapper = m.Mappers[dst]
+	}
+	if hasDstMapper {
+		tm.MapFunc = dstMapper(m, src, dst)
+		if tm.MapFunc != nil {
+			return
+		}
+	}
+	if hasSrcMapper || hasDstMapper {
+		return
+	}
 
-func (m *Mapper) mapMapToStruct(src, dst reflect.Value) error {
-	dstNum := dst.Type().NumField()
-	for i := 0; i < dstNum; i++ {
-		dstVal := dst.Field(i)
-		dstTyp := dst.Type().Field(i)
-		tag, skip := m.parseTag(dstTyp)
-		if skip {
-			continue
-		}
-		srcKey := reflect.ValueOf(tag)
-		srcVal := m.srcValue(src.MapIndex(srcKey))
-		if canSetDirectly(srcVal.Type(), dstTyp.Type) {
-			dstVal.Set(srcVal)
-		} else {
-			aux := reflect.New(dstTyp.Type).Elem()
-			if err := m.mapRefl(srcVal, aux); err != nil {
-				return err
-			}
-			dstVal.Set(aux)
-		}
-	}
-	return nil
-}
-
-func (m *Mapper) mapMapToMap(src, dst reflect.Value) error {
-	srcKeyTyp := src.Type().Key()
-	dstKeyTyp := dst.Type().Key()
-	srcElemTyp := src.Type().Elem()
-	dstElemTyp := dst.Type().Elem()
-	sameKeys := srcKeyTyp == dstKeyTyp
-	canSetDir := canSetDirectly(srcElemTyp, dstElemTyp)
-	for _, srcKey := range src.MapKeys() {
-		dstKey := srcKey
-		if !sameKeys {
-			dstKey = reflect.New(dstKeyTyp).Elem()
-			if err := m.mapRefl(m.srcValue(srcKey), m.dstValue(dstKey)); err != nil {
-				return NewInvalidMappingError(srcKey.Type(), dstKeyTyp, "unable to map key")
-			}
-		}
-		if canSetDir {
-			dst.SetMapIndex(dstKey, src.MapIndex(srcKey))
-		} else {
-			dstVal := m.dstValue(dst.MapIndex(dstKey))
-			if dstVal.IsValid() {
-				if err := m.mapRefl(m.srcValue(src.MapIndex(srcKey)), dstVal); err != nil {
-					return err
-				}
-			} else {
-				aux := reflect.New(dstElemTyp).Elem()
-				if err := m.mapRefl(m.srcValue(src.MapIndex(srcKey)), m.dstValue(aux)); err != nil {
-					return err
-				}
-				dst.SetMapIndex(dstKey, aux)
-			}
-		}
-	}
-	return nil
-}
-
-func (m *Mapper) mapStructToStruct(src, dst reflect.Value) error {
-	switch {
-	case src.Type() == dst.Type():
-		return m.mapSameTypeStructs(src, dst)
-	default:
-		return m.mapDifferentTypeStructs(src, dst)
-	}
-}
-
-func (m *Mapper) mapSameTypeStructs(src, dst reflect.Value) error {
-	srcTyp := src.Type()
-	srcNum := src.NumField()
-	for i := 0; i < srcNum; i++ {
-		if _, skip := m.parseTag(srcTyp.Field(i)); skip {
-			continue
-		}
-		if err := m.mapRefl(m.srcValue(src.Field(i)), m.dstValue(dst.Field(i))); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *Mapper) mapDifferentTypeStructs(src, dst reflect.Value) error {
-	srcTyp := src.Type()
-	dstTyp := dst.Type()
-	srcNum := srcTyp.NumField()
-	dstNum := dstTyp.NumField()
-	valMap := map[string]reflect.Value{}
-	for i := 0; i < srcNum; i++ {
-		srcVal := src.Field(i)
-		srcFld := srcTyp.Field(i)
-		tag, skip := m.parseTag(srcFld)
-		if skip {
-			continue
-		}
-		valMap[tag] = m.srcValue(srcVal)
-	}
-	for i := 0; i < dstNum; i++ {
-		dstVal := dst.Field(i)
-		dstFld := dstTyp.Field(i)
-		tag, skip := m.parseTag(dstFld)
-		if skip {
-			continue
-		}
-		if srcVal, ok := valMap[tag]; ok {
-			if canSetDirectly(srcVal.Type(), dstFld.Type) {
-				dstVal.Set(srcVal)
-			} else {
-				if err := m.mapRefl(srcVal, m.dstValue(dstVal)); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (m *Mapper) mapStructToMap(src, dst reflect.Value) error {
-	if dst.Type().Key().Kind() != reflect.String {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "map key must be string")
-	}
-	dstTyp := dst.Type().Elem()
-	srcNum := src.Type().NumField()
-	for i := 0; i < srcNum; i++ {
-		srcVal := src.Field(i)
-		srcFld := src.Type().Field(i)
-		tag, skip := m.parseTag(srcFld)
-		if skip {
-			continue
-		}
-		key := reflect.ValueOf(tag)
-		if canSetDirectly(srcFld.Type, dstTyp) {
-			dst.SetMapIndex(key, srcVal)
-		} else {
-			dstVal := m.dstValue(dst.MapIndex(key))
-			if dstVal.IsValid() {
-				if err := m.mapRefl(m.srcValue(srcVal), dstVal); err != nil {
-					return err
-				}
-			} else {
-				aux := reflect.New(dstTyp).Elem()
-				if err := m.mapRefl(m.srcValue(srcVal), aux); err != nil {
-					return err
-				}
-				dst.SetMapIndex(key, aux)
-			}
-		}
-	}
-	return nil
+	// If none of the types implements MapTo or MapFrom, and there are no
+	// mapper providers for them, try to use mapper for built-in types.
+	tm.MapFunc = builtInTypesMapper(m, src, dst)
+	return
 }
 
 // srcValue unpacks values from pointers and interfaces until it reaches a non-pointer,
@@ -747,6 +230,9 @@ func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
 			return v
 		}
 		if _, ok := v.Interface().(MapFrom); ok {
+			for v.Kind() == reflect.Interface {
+				v = v.Elem()
+			}
 			return v
 		}
 		v = v.Elem()
@@ -761,6 +247,9 @@ func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
 // these conditions. If the value is a pointer, map or slice, it will be
 // initialized if needed.
 func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
+	if v.Kind() != reflect.Interface && v.Kind() != reflect.Pointer && v.CanSet() {
+		return v
+	}
 	settable := reflect.Value{}
 	for {
 		if !v.IsValid() {
@@ -771,9 +260,12 @@ func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 			return v
 		}
 		if _, ok := v.Interface().(MapTo); ok {
+			for v.Kind() == reflect.Interface {
+				v = v.Elem()
+			}
 			return v
 		}
-		if m.MapTo[v.Type()] != nil {
+		if m.Mappers[v.Type()] != nil {
 			return v
 		}
 		if v.Kind() == reflect.Map && !v.IsNil() {
@@ -822,86 +314,14 @@ func (m *Mapper) parseTag(f reflect.StructField) (fields string, skip bool) {
 	return tag, false
 }
 
-// toBytes converts a value to a byte slice using binary.Write.
-func (m *Mapper) toBytes(src, dst reflect.Value) error {
-	// binary.Write does not work with Int and Uint types, so we need to
-	// convert them to int64 and uint64. To make mapped values compatible
-	// between 32 and 64-bit architectures, we always use int64 and uint64.
-	switch src.Kind() {
-	case reflect.Int:
-		src = reflect.ValueOf(src.Int())
-	case reflect.Uint:
-		src = reflect.ValueOf(src.Uint())
-	}
-	var buf bytes.Buffer
-	if err := binary.Write(&buf, m.ByteOrder, src.Interface()); err != nil {
-		return NewInvalidMappingError(src.Type(), dst.Type(), err.Error())
-	}
-	switch dst.Kind() {
-	case reflect.Slice:
-		if dst.Type().Elem().Kind() != reflect.Uint8 {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "")
-		}
-		dst.SetBytes(buf.Bytes())
-	case reflect.Array:
-		if dst.Type().Elem().Kind() != reflect.Uint8 {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "")
-		}
-		if dst.Len() != buf.Len() {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "invalid array length")
-		}
-		reflect.Copy(dst, reflect.ValueOf(buf.Bytes()))
-	default:
-		return NewInvalidMappingError(src.Type(), dst.Type(), "")
-	}
-	return nil
-}
-
-// fromBytes converts a byte slice to a value using binary.Read.
-func (m *Mapper) fromBytes(src []byte, dst reflect.Value) error {
-	if len(src) != int(dst.Type().Size()) {
-		return NewInvalidMappingError(reflect.TypeOf(src), dst.Type(), "invalid byte slice length")
-	}
-	switch dst.Kind() {
-	case reflect.Int:
-		var v int64
-		if err := binary.Read(bytes.NewReader(src), m.ByteOrder, &v); err != nil {
-			return NewInvalidMappingError(reflect.TypeOf(src), dst.Type(), err.Error())
-		}
-		if dst.OverflowInt(v) {
-			return NewInvalidMappingError(reflect.TypeOf(src), dst.Type(), "overflow")
-		}
-		dst.SetInt(v)
-	case reflect.Uint:
-		var v uint64
-		if err := binary.Read(bytes.NewReader(src), m.ByteOrder, &v); err != nil {
-			return NewInvalidMappingError(reflect.TypeOf(src), dst.Type(), err.Error())
-		}
-		if dst.OverflowUint(v) {
-			return NewInvalidMappingError(reflect.TypeOf(src), dst.Type(), "overflow")
-		}
-		dst.SetUint(v)
-	default:
-		if err := binary.Read(bytes.NewBuffer(src), m.ByteOrder, dst.Addr().Interface()); err != nil {
-			return NewInvalidMappingError(reflect.TypeOf(src), dst.Type(), err.Error())
-		}
-	}
-	return nil
-}
-
-// canSetDirectly reports whether a src value can be set directly to a dst.
-func canSetDirectly(src, dst reflect.Type) bool {
-	return (src == dst || dst == anyTy) && isSimpleType(src)
-}
-
-// isSimpleType indicates whether a type is a simple type. This allows to
-// avoid checking if a type has custom mapping functions.
+// isSimpleType indicates whether a type is simple type.
 //
-// A type is considered simple if it is a built-in type, or it is a slice, array
-// or map that is composed of build-in types.
-//
-// A type that is based on a simple type, like `type MyInt int`, is not
-// considered simple because it may implement MapTo or MapFrom interfaces.
+// A type is considered simple if it is a built-in type, or it is a slice,
+// array or map that is composed of build-in types. In other words, it is a
+// type that cannot implement the MapFrom or MapTo interfaces nor contain
+// fields or elements that can implement these interfaces, e.g. a custom type
+// like `type MyInt int` is not considered simple because it can implement
+// interfaces.
 //
 // Structs are never considered simple because they are rarely used without a
 // custom type, and verifying if a struct is simple is too expensive.
@@ -945,6 +365,48 @@ func isSimpleType(p reflect.Type) bool {
 	return false
 }
 
+func implMapTo(t reflect.Type) bool {
+	_, ok := reflect.Zero(t).Interface().(MapTo)
+	return ok
+}
+
+func implMapFrom(t reflect.Type) bool {
+	_, ok := reflect.Zero(t).Interface().(MapFrom)
+	return ok
+}
+
+func mapDirect(_ *Mapper, src, dst reflect.Value) error {
+	dst.Set(src)
+	return nil
+}
+
+func mapFromInterface(m *Mapper, src, dst reflect.Value) error {
+	return dst.Interface().(MapFrom).MapFrom(m, src)
+}
+
+func mapToInterface(m *Mapper, src, dst reflect.Value) error {
+	return src.Interface().(MapTo).MapTo(m, dst)
+}
+
+// typeMapper contains a hint about how to map a value. It may ba passed to
+// mapRefl method to help it decide how to map a value.
+type typeMapper struct {
+	SrcType reflect.Type
+	DstType reflect.Type
+	MapFunc MapFunc
+}
+
+func (tm *typeMapper) match(src, dst reflect.Type) bool {
+	return tm.SrcType == src && tm.DstType == dst
+}
+
+func (tm *typeMapper) mapRefl(m *Mapper, src, dst reflect.Value) error {
+	if tm.MapFunc == nil {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "")
+	}
+	return tm.MapFunc(m, src, dst)
+}
+
 // InvalidSrcErr is returned when reflect.IsValid returns false for the source
 // value.
 var InvalidSrcErr = errors.New("mapper: invalid source value")
@@ -968,6 +430,11 @@ func (e *InvalidMappingErr) Error() string {
 		return fmt.Sprintf("mapper: cannot map %v to %v", e.From, e.To)
 	}
 	return fmt.Sprintf("mapper: cannot map %v to %v: %s", e.From, e.To, e.Reason)
+}
+
+type typePair struct {
+	src reflect.Type
+	dst reflect.Type
 }
 
 var (

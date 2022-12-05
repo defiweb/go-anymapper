@@ -102,7 +102,7 @@ func TestTypes(t *testing.T) {
 
 		// big.Int <-> slice
 		{name: "big.Int-[]byte#positive", src: big.NewInt(2), dst: new([]byte), exp: []byte{0x2}},
-		{name: "big.Int-[]byte#negative", src: big.NewInt(-2), dst: new([]byte), exp: []byte{0x2}},
+		{name: "big.Int-[]byte#negative", src: big.NewInt(-2), dst: new([]byte), err: true},
 		{name: "[]byte-big.Int", src: []byte{0x2}, dst: new(big.Int), exp: big.NewInt(2)},
 
 		// big.Int <-> big.Float
