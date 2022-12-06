@@ -160,13 +160,6 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 		DstType: dst,
 	}
 
-	// If destination type is an any interface, map the value directly using
-	// reflect.Set or if the destination type has a value, map to that type.
-	if dst == anyTy {
-		tm.MapFunc = mapAny
-		return
-	}
-
 	var isSrcSimple, isDstSimple, sameTypes bool
 	if src == dst {
 		isSrcSimple = isSimpleType(src)
@@ -192,6 +185,14 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 	}
 	if !isDstSimple && !sameTypes && implMapFrom(dst) {
 		tm.MapFunc = mapFromInterface
+		return
+	}
+
+	// If destination type is an any interface, map the value directly using
+	// reflect.Set, if the destination interface is not nil, map the value
+	// to the same type as the value in the interface.
+	if dst == anyTy {
+		tm.MapFunc = mapAny
 		return
 	}
 
@@ -373,18 +374,24 @@ func isSimpleType(p reflect.Type) bool {
 	return false
 }
 
+// implMapTo returns true if the type implements the MapTo interface.
 func implMapTo(t reflect.Type) bool {
 	_, ok := reflect.Zero(t).Interface().(MapTo)
 	return ok
 }
 
+// implMapFrom returns true if the type implements the MapFrom interface.
 func implMapFrom(t reflect.Type) bool {
 	_, ok := reflect.Zero(t).Interface().(MapFrom)
 	return ok
 }
 
 func mapAny(m *Mapper, src, dst reflect.Value) error {
-	if dst.Kind() == reflect.Interface && !dst.IsNil() && !dst.Elem().CanSet() {
+	if !dst.IsNil() && !dst.Elem().CanSet() {
+		// Mapper always tries to reuse the destination value if possible, but
+		// if destination value is not settable, we need to cheat a little and
+		// create a new value of the same type and then set it back to the
+		// destination.
 		aux := reflect.New(dst.Elem().Type())
 		if err := m.MapRefl(src, aux); err != nil {
 			return NewInvalidMappingError(src.Type(), dst.Type(), "")

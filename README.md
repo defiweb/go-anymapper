@@ -36,14 +36,15 @@ The above types refer to the type kind, not the actual type, hence `type MyInt i
 Mapping will fail if the target type is not large enough to hold the source value. For example, mapping `int64`
 to `int8` may fail because `int64` can store values larger than `int8`.
 
-If the destination slice is longer than the source, the extra elements will be zeroed. If the destination slice is
-shorter than the source, the mapper will append new elements to the destination slice.
-
 When mapping numbers from a byte slice or array, the length of the slice/array *must* be the same as the size of the
 variable in bytes. The size of `int`, `uint` is always considered as 64 bits.
 
-When mapping to slices, arrays or maps, the mapper will try to reuse the existing elements of the destination
-if possible. For example, mapping `[]int{1, 2}` to `[]any{"", 0}` will result in `[]any{"1", 2}`.
+The mapper will not overwrite the values in the destination if they do not have corresponding values in the source. For
+slices, if the destination slice is longer than the source slice, the extra elements will remain unchanged.
+
+When using the mapper to convert values to interface types, it will attempt to use existing elements in the destination
+if possible. For example, mapping `[]int{1, 2}` to `[]any{"", 0}` will result in `[]any{"1", 2}`, allowing to easily
+assign values to a specific implementation of an interface.
 
 In addition to the above rules, the default configuration of the mapper supports the following conversions:
 

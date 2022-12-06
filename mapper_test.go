@@ -59,6 +59,11 @@ func TestCustomType(t *testing.T) {
 		require.NoError(t, Map(&customType{foo: "foo"}, &dst))
 		assert.Equal(t, "foo", dst)
 	})
+	t.Run("mapToAny", func(t *testing.T) {
+		var dst any
+		require.NoError(t, Map(&customType{foo: "foo"}, &dst))
+		assert.Equal(t, "foo", dst)
+	})
 	t.Run("both", func(t *testing.T) {
 		var dst customType
 		require.NoError(t, Map(customType{foo: "foo"}, &dst))

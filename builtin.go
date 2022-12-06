@@ -460,7 +460,6 @@ func mapSliceToSlice(m *Mapper, src, dst reflect.Value) error {
 			return err
 		}
 	}
-	dst.SetLen(src.Len())
 	return nil
 }
 
@@ -523,7 +522,6 @@ func mapArrayToSlice(m *Mapper, src, dst reflect.Value) error {
 				return err
 			}
 		}
-		dst.SetLen(src.Len())
 	}
 	return nil
 }
@@ -568,9 +566,12 @@ func mapMapToStruct(m *Mapper, src, dst reflect.Value) error {
 		if skip {
 			continue
 		}
-		dstVal := dst.Field(i)
 		srcKey := reflect.ValueOf(tag)
+		dstVal := dst.Field(i)
 		srcVal := m.srcValue(src.MapIndex(srcKey))
+		if !srcVal.IsValid() {
+			continue
+		}
 		srcTyp := srcVal.Type()
 		if srcTyp == dstFld.Type && isSimpleType(srcTyp) {
 			dstVal.Set(srcVal)
@@ -613,8 +614,8 @@ func mapMapToMap(m *Mapper, src, dst reflect.Value) error {
 			srcVal := m.srcValue(src.MapIndex(srcKey))
 			dstVal := m.dstValue(dst.MapIndex(dstKey))
 			srcTyp := srcVal.Type()
-			dstTyp := dstVal.Type()
 			if dstVal.IsValid() {
+				dstTyp := dstVal.Type()
 				if !elemMapper.match(srcTyp, dstTyp) {
 					elemMapper = m.mapperFor(srcTyp, dstTyp)
 				}
@@ -626,7 +627,7 @@ func mapMapToMap(m *Mapper, src, dst reflect.Value) error {
 				if !elemMapper.match(srcTyp, aux.Type()) {
 					elemMapper = m.mapperFor(srcTyp, aux.Type())
 				}
-				if err := elemMapper.mapRefl(m, src, m.dstValue(aux)); err != nil {
+				if err := elemMapper.mapRefl(m, srcVal, m.dstValue(aux)); err != nil {
 					return err
 				}
 				dst.SetMapIndex(dstKey, aux)
@@ -753,7 +754,7 @@ func mapStructToMap(m *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-// numberToBytes converts a int or uint to a byte slice using binary.Write.
+// numberToBytes converts an int or uint to a byte slice using binary.Write.
 func numberToBytes(order binary.ByteOrder, src, dst reflect.Value) error {
 	// binary.Write does not work with Int and Uint types, so we need to
 	// convert them to int64 and uint64. To make mapped values compatible
