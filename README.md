@@ -33,19 +33,6 @@ the destination. The function will try to map the source to the destination usin
 
 The above types refer to the type kind, not the actual type, hence `type MyInt int` is also considered as `int`.
 
-Mapping will fail if the target type is not large enough to hold the source value. For example, mapping `int64`
-to `int8` may fail because `int64` can store values larger than `int8`.
-
-When mapping numbers from a byte slice or array, the length of the slice/array *must* be the same as the size of the
-variable in bytes. The size of `int`, `uint` is always considered as 64 bits.
-
-The mapper will not overwrite the values in the destination if they do not have corresponding values in the source. For
-slices, if the destination slice is longer than the source slice, the extra elements will remain unchanged.
-
-When using the mapper to convert values to interface types, it will attempt to use existing elements in the destination
-if possible. For example, mapping `[]int{1, 2}` to `[]any{"", 0}` will result in `[]any{"1", 2}`, allowing to easily
-assign values to a specific implementation of an interface.
-
 In addition to the above rules, the default configuration of the mapper supports the following conversions:
 
 - `time.Time` ⇔ `string` ⇒ converts string to or from time using RFC3339 format.
@@ -66,6 +53,19 @@ In addition to the above rules, the default configuration of the mapper supports
 - `big.Rat` ⇔ `big.Float` ⇒ converts using `big.Float.SetRat` and `big.Float.Rat`.
 - `big.Rat` ⇔ `slice`, `[2]array` ⇒ convert first element to/from numerator and second to/form denominator.
 - `big.Rat` ⇔ _other_ ⇒ try to convert using `big.Float` as intermediate value.
+
+Mapping will fail if the target type is not large enough to hold the source value. For example, mapping `int64`
+to `int8` may fail because `int64` can store values larger than `int8`.
+
+When mapping numbers from a byte slice or array, the length of the slice/array *must* be the same as the size of the
+variable in bytes. The size of `int`, `uint` is always considered as 64 bits.
+
+The mapper will not overwrite the values in the destination if they do not have corresponding values in the source. For
+slices, if the destination slice is longer than the source slice, the extra elements will remain unchanged.
+
+When using the mapper to convert values to interface types, it will attempt to use existing elements in the destination
+if possible. For example, mapping `[]int{1, 2}` to `[]any{"", 0}` will result in `[]any{"1", 2}`, allowing to easily
+assign values to a specific implementation of an interface.
 
 ### Mapping structures
 
@@ -262,6 +262,104 @@ func main() {
 
 	fmt.Println(b.X.String()) // "42"
 }
+```
+
+### Benchmark
+
+Following benchmarks compare the performance of the `go-anymapper` package with the `mapstructure` package.
+
+```go
+package main
+
+import (
+	"testing"
+
+	"github.com/defiweb/go-anymapper"
+	"github.com/mitchellh/mapstructure"
+)
+
+func Benchmark(b *testing.B) {
+	type Object struct {
+		A string
+		B int
+		C []string
+		D []any
+		E map[string]string
+	}
+	b.Run("anymapper/map-struct", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			input := map[string]interface{}{
+				"A": "a",
+				"B": 1,
+				"C": []string{"a", "b", "c"},
+				"D": []any{1, "2", 3.0},
+				"E": map[string]string{"a": "a", "b": "b", "c": "c"},
+			}
+			var result Object
+			err := anymapper.Map(input, &result)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("anymapper/struct-map", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			input := Object{
+				A: "a",
+				B: 1,
+				C: []string{"a", "b", "c"},
+				D: []any{1, "2", 3.0},
+				E: map[string]string{"a": "a", "b": "b", "c": "c"},
+			}
+			var result map[string]any
+			err := anymapper.Map(input, &result)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("mapstructure/map-struct", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			input := map[string]interface{}{
+				"A": "a",
+				"B": 1,
+				"C": []string{"a", "b", "c"},
+				"D": []any{1, "2", 3.0},
+				"E": map[string]string{"a": "a", "b": "b", "c": "c"},
+			}
+			var result Object
+			err := mapstructure.Decode(input, &result)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("mapstructure/struct-map", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			input := Object{
+				A: "a",
+				B: 1,
+				C: []string{"a", "b", "c"},
+				D: []any{1, "2", 3.0},
+				E: map[string]string{"a": "a", "b": "b", "c": "c"},
+			}
+			var result map[string]any
+			err := mapstructure.Decode(input, &result)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+```
+
+Results:
+
+```
+BenchmarK/anymapper/map-struct         	  892472	      1271 ns/op
+Benchmark/anymapper/struct-map         	  903970	      1301 ns/op
+BenchmarK/mapstructure/map-struct      	  265148	      4682 ns/op
+Benchmark/mapstructure/struct-map      	 1000000	      1070 ns/op
 ```
 
 ## Documentation
