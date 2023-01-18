@@ -95,7 +95,19 @@ setting.
 Additionally, the strict type check applies to custom types as well. For example, a custom type `type MyInt int` will
 not be treated as `int` anymore.
 
+### Custom mapping functions
+
+If it is not possible to implement the above interfaces, custom mapping functions can be registered with the
+`Mapper.Mapper` map. The keys of this map are the types of the destination or source values, and the values are
+functions that return a `MapFunc` function that can map the source value to the destination value.
+
+If the function returns a `nil` value, it means that the mapping is not possible. If both the source and destination
+types are registered, the source type will be used first. If it returns a nil value, the destination type will be used.
+If neither of them returns a `nil` value, the mapping will fail.
+
 ### `MapTo` and `MapFrom` interfaces:
+
+**This feature is disabled by default. To enable it, set `Mapper.Hooks` to `Mapper.MappingInterfaceHooks`.**
 
 The `go-anymapper` package provides two interfaces that can be implemented by the source and destination types to
 customize the mapping process.
@@ -108,21 +120,11 @@ the destination value.
 
 If both source and destination values implement the `MapTo` and `MapFrom` interfaces then only `MapTo` will be used.
 
-### Custom mapping functions
-
-If it is not possible to implement the above interfaces, custom mapping functions can be registered with the
-`Mapper.Mapper` map. The keys of this map are the types of the destination or source values, and the values are
-functions that return a `MapFunc` function that can map the source value to the destination value.
-
-If the function returns a `nil` value, it means that the mapping is not possible. If both the source and destination
-types are registered, the source type will be used first. If it returns a nil value, the destination type will be used.
-If neither of them returns a `nil` value, the mapping will fail.
-
 ### Default mapper instance
 
-The package defines the default mapper instance `DefaultMapper` that is used by `Map` and `MapRefl` functions. It is
+The package defines the default mapper instance `Default` that is used by `Map` and `MapRefl` functions. It is
 possible to change configuration of the default mapper, but it may affect other packages that use the default mapper. To
-avoid this, it is recommended to create a copy of the default mapper using the `DefaultMapper.Copy` method.
+avoid this, it is recommended to create a new instance of the mapper using the `New` method.
 
 ## Examples
 

@@ -9,45 +9,21 @@ import (
 	"sync"
 )
 
-// MapTo interface is implemented by types that can map themselves to
-// another type.
-type MapTo interface {
-	// MapTo maps the receiver value to the destination value.
-	MapTo(m *Mapper, dst reflect.Value) error
-}
-
-// MapFrom interface is implemented by types that can set their value from
-// another type.
-type MapFrom interface {
-	// MapFrom sets the receiver value from the source value.
-	MapFrom(m *Mapper, src reflect.Value) error
-}
-
-// MapFuncProvider is a function that returns a MapFunc for given src and dst
-// types. If mapping is not supported, it returns nil.
-type MapFuncProvider func(m *Mapper, src, dst reflect.Type) MapFunc
-
 // MapFunc is a function that maps a src value to a dst value. It returns an
 // error if the mapping is not possible. The src and dst values are never
 // pointers.
 type MapFunc func(m *Mapper, src, dst reflect.Value) error
 
-// DefaultMapper is the default Mapper used by the Map and MapRefl functions.
+// MapFuncProvider is a function that returns a MapFunc for given src and dst
+// types. If mapping is not supported, it returns nil.
+type MapFuncProvider func(m *Mapper, src, dst reflect.Type) MapFunc
+
+// Default is the default Mapper used by the Map and MapRefl functions.
 // It also provides additional mapping rules for time.Time, big.Int, big.Float
 // and big.Rat. It can be modified to change the default behavior, but if the
 // mapper is used by other packages, it is recommended to create a copy of the
 // default mapper and modify the copy.
-var DefaultMapper = &Mapper{
-	Tag:       `map`,
-	ByteOrder: binary.BigEndian,
-	Mappers: map[reflect.Type]MapFuncProvider{
-		timeTy:     timeTypeMapper,
-		bigIntTy:   bigIntTypeMapper,
-		bigFloatTy: bigFloatTypeMapper,
-		bigRatTy:   bigRatTypeMapper,
-	},
-	cacheMap: make(map[typePair]*typeMapper, 0),
-}
+var Default = New()
 
 // Mapper hold the mapper configuration.
 type Mapper struct {
@@ -72,28 +48,77 @@ type Mapper struct {
 	// then the provider for destination value is used.
 	Mappers map[reflect.Type]MapFuncProvider
 
+	// Hooks are functions that are called during the mapping process. They
+	// can modify the behavior of the mapper. See Hooks for more information.
+	Hooks Hooks
+
 	// ByteOrder is the byte order used to map numbers to and from byte slices.
 	ByteOrder binary.ByteOrder
 
 	// DisableCache disables the cache of the type mappers.
 	DisableCache bool
 
+	// Cache:
 	cacheMu  sync.Mutex
 	cacheMap map[typePair]*typeMapper
 }
 
+// Hooks are functions that are called during the mapping process. They can
+// modify the behavior of the mapper.
+type Hooks struct {
+	// MapFuncHook allows to bypass the default mapping rules and use a custom
+	// mapping function. If the hook returns nil, then the default mapping
+	// rules are used.
+	//
+	// Returned MapFunc is cached.
+	MapFuncHook MapFuncProvider
+
+	// SourceValueHook returns a value that should be used as the source
+	// value. It is called before the source value is used in the mapping.
+	//
+	// If the hook returns an invalid value, then the default function is used.
+	//
+	// By default, mapper unpacks pointers and dereferences interfaces. This
+	// hook can be used to change this behavior.
+	SourceValueHook func(reflect.Value) reflect.Value
+
+	// DestinationValueHook returns a value that should be used as the destination
+	// value. It is called before the destination value is used in the mapping.
+	//
+	// If the hook returns an invalid value, then the default function is used.
+	//
+	// By default, mapper unpacks pointers and dereferences interfaces. This
+	// hook can be used to change this behavior.
+	DestinationValueHook func(reflect.Value) reflect.Value
+}
+
+// New returns a new Mapper with default configuration.
+func New() *Mapper {
+	return &Mapper{
+		Tag:       `map`,
+		ByteOrder: binary.BigEndian,
+		Mappers: map[reflect.Type]MapFuncProvider{
+			timeTy:     timeTypeMapper,
+			bigIntTy:   bigIntTypeMapper,
+			bigFloatTy: bigFloatTypeMapper,
+			bigRatTy:   bigRatTypeMapper,
+		},
+		cacheMap: make(map[typePair]*typeMapper, 0),
+	}
+}
+
 // Map maps the source value to the destination value.
 //
-// It is shorthand for DefaultMapper.mapRefl(src, dst).
+// It is shorthand for Default.mapRefl(src, dst).
 func Map(src, dst any) error {
-	return DefaultMapper.Map(src, dst)
+	return Default.Map(src, dst)
 }
 
 // MapRefl maps the source value to the destination value.
 //
-// It is shorthand for DefaultMapper.MapRefl(src, dst).
+// It is shorthand for Default.MapRefl(src, dst).
 func MapRefl(src, dst reflect.Value) error {
-	return DefaultMapper.MapRefl(src, dst)
+	return Default.MapRefl(src, dst)
 }
 
 // Map maps the source value to the destination value.
@@ -128,6 +153,7 @@ func (m *Mapper) Copy() *Mapper {
 		Tag:         m.Tag,
 		FieldMapper: m.FieldMapper,
 		ByteOrder:   m.ByteOrder,
+		Hooks:       m.Hooks,
 		cacheMap:    make(map[typePair]*typeMapper, 0),
 	}
 	if m.Mappers != nil {
@@ -142,7 +168,6 @@ func (m *Mapper) Copy() *Mapper {
 // mapperFor returns the typeMapper that can map values of the given types.
 // If mapping is not possible, the returned typeMapper has a nil MapFunc.
 func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
-	// Try to find a mapper in the cache.
 	if !m.DisableCache {
 		m.cacheMu.Lock()
 		if v, ok := m.cacheMap[typePair{src: src, dst: dst}]; ok {
@@ -160,6 +185,14 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 		DstType: dst,
 	}
 
+	// If MapFuncHook is set, then use it to get the mapping function.
+	if m.Hooks.MapFuncHook != nil {
+		if fn := m.Hooks.MapFuncHook(m, src, dst); fn != nil {
+			tm.MapFunc = fn
+			return
+		}
+	}
+
 	var isSrcSimple, isDstSimple, sameTypes bool
 	if src == dst {
 		isSrcSimple = isSimpleType(src)
@@ -174,17 +207,6 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 	// using reflect.Set.
 	if sameTypes && isSrcSimple {
 		tm.MapFunc = mapDirect
-		return
-	}
-
-	// If src or dst implements MapTo or MapFrom, use the interface methods to
-	// map the value.
-	if !isSrcSimple && implMapTo(src) {
-		tm.MapFunc = mapToInterface
-		return
-	}
-	if !isDstSimple && !sameTypes && implMapFrom(dst) {
-		tm.MapFunc = mapFromInterface
 		return
 	}
 
@@ -234,14 +256,13 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 // non-interface value or value that implements the MapFrom interface or a type that
 // has a custom mapper.
 func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
-	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
-		if isSimpleType(v.Type()) {
+	if m.Hooks.SourceValueHook != nil {
+		if v := m.Hooks.SourceValueHook(v); v.IsValid() {
 			return v
 		}
-		if _, ok := v.Interface().(MapFrom); ok {
-			for v.Kind() == reflect.Interface {
-				v = v.Elem()
-			}
+	}
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+		if isSimpleType(v.Type()) {
 			return v
 		}
 		v = v.Elem()
@@ -256,6 +277,11 @@ func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
 // these conditions. If the value is a pointer, map or slice, it will be
 // initialized if needed.
 func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
+	if m.Hooks.DestinationValueHook != nil {
+		if v := m.Hooks.DestinationValueHook(v); v.IsValid() {
+			return v
+		}
+	}
 	if v.Kind() != reflect.Interface && v.Kind() != reflect.Pointer && v.CanSet() {
 		return v
 	}
@@ -266,12 +292,6 @@ func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 		}
 		m.initValue(v)
 		if v.CanSet() && isSimpleType(v.Type()) {
-			return v
-		}
-		if _, ok := v.Interface().(MapTo); ok {
-			for v.Kind() == reflect.Interface {
-				v = v.Elem()
-			}
 			return v
 		}
 		if m.Mappers[v.Type()] != nil {
@@ -374,18 +394,6 @@ func isSimpleType(p reflect.Type) bool {
 	return false
 }
 
-// implMapTo returns true if the type implements the MapTo interface.
-func implMapTo(t reflect.Type) bool {
-	_, ok := reflect.Zero(t).Interface().(MapTo)
-	return ok
-}
-
-// implMapFrom returns true if the type implements the MapFrom interface.
-func implMapFrom(t reflect.Type) bool {
-	_, ok := reflect.Zero(t).Interface().(MapFrom)
-	return ok
-}
-
 func mapAny(m *Mapper, src, dst reflect.Value) error {
 	if !dst.IsNil() && !dst.Elem().CanSet() {
 		// Mapper always tries to reuse the destination value if possible, but
@@ -408,16 +416,6 @@ func mapDirect(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapFromInterface(m *Mapper, src, dst reflect.Value) error {
-	return dst.Interface().(MapFrom).MapFrom(m, src)
-}
-
-func mapToInterface(m *Mapper, src, dst reflect.Value) error {
-	return src.Interface().(MapTo).MapTo(m, dst)
-}
-
-// typeMapper contains a hint about how to map a value. It may ba passed to
-// mapRefl method to help it decide how to map a value.
 type typeMapper struct {
 	SrcType reflect.Type
 	DstType reflect.Type
@@ -429,10 +427,10 @@ func (tm *typeMapper) match(src, dst reflect.Type) bool {
 }
 
 func (tm *typeMapper) mapRefl(m *Mapper, src, dst reflect.Value) error {
-	if tm.MapFunc == nil {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "")
+	if tm.MapFunc != nil {
+		return tm.MapFunc(m, src, dst)
 	}
-	return tm.MapFunc(m, src, dst)
+	return NewInvalidMappingError(src.Type(), dst.Type(), "")
 }
 
 // InvalidSrcErr is returned when reflect.IsValid returns false for the source

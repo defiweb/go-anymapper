@@ -26,57 +26,12 @@ func TestInvalidValues(t *testing.T) {
 	})
 }
 
-type customType struct {
-	foo string
-}
-
-func (c *customType) MapFrom(m *Mapper, src reflect.Value) error {
-	return m.MapRefl(src, reflect.ValueOf(&c.foo))
-}
-
-func (c customType) MapTo(m *Mapper, dst reflect.Value) error {
-	return m.MapRefl(reflect.ValueOf(c.foo), dst)
-}
-
-func TestCustomType(t *testing.T) {
-	t.Run("mapFrom", func(t *testing.T) {
-		var dst customType
-		require.NoError(t, Map("foo", &dst))
-		assert.Equal(t, "foo", dst.foo)
-	})
-	t.Run("mapTo", func(t *testing.T) {
-		var dst string
-		require.NoError(t, Map(customType{foo: "foo"}, &dst))
-		assert.Equal(t, "foo", dst)
-	})
-	t.Run("mapFromPtr", func(t *testing.T) {
-		var dst *customType
-		require.NoError(t, Map("foo", &dst))
-		assert.Equal(t, "foo", dst.foo)
-	})
-	t.Run("mapToPtr", func(t *testing.T) {
-		var dst string
-		require.NoError(t, Map(&customType{foo: "foo"}, &dst))
-		assert.Equal(t, "foo", dst)
-	})
-	t.Run("mapToAny", func(t *testing.T) {
-		var dst any
-		require.NoError(t, Map(&customType{foo: "foo"}, &dst))
-		assert.Equal(t, "foo", dst)
-	})
-	t.Run("both", func(t *testing.T) {
-		var dst customType
-		require.NoError(t, Map(customType{foo: "foo"}, &dst))
-		assert.Equal(t, "foo", dst.foo)
-	})
-}
-
 func TestCustomMapFunc(t *testing.T) {
 	type customType struct {
 		Foo string
 	}
 	typ := reflect.TypeOf(customType{})
-	m := DefaultMapper.Copy()
+	m := Default.Copy()
 	m.Mappers[typ] = func(m *Mapper, src, dst reflect.Type) MapFunc {
 		if src == typ {
 			return func(m *Mapper, src, dst reflect.Value) error {
@@ -118,7 +73,7 @@ func TestCustomMapFunc(t *testing.T) {
 }
 
 func TestFieldMapper(t *testing.T) {
-	m := DefaultMapper.Copy()
+	m := Default.Copy()
 	m.FieldMapper = func(name string) string {
 		return strings.ToLower(name)
 	}
@@ -139,7 +94,7 @@ func TestFieldMapper(t *testing.T) {
 }
 
 func TestEmptyTag(t *testing.T) {
-	m := DefaultMapper.Copy()
+	m := Default.Copy()
 	m.Tag = ""
 	type Src struct {
 		Foo string `map:"bar"`
@@ -153,12 +108,12 @@ func TestEmptyTag(t *testing.T) {
 }
 
 func TestCopy(t *testing.T) {
-	cpy := DefaultMapper.Copy()
-	assert.Equal(t, DefaultMapper.Tag, cpy.Tag)
-	assert.Equal(t, DefaultMapper.ByteOrder, cpy.ByteOrder)
-	assert.Equal(t, &DefaultMapper.FieldMapper, &cpy.FieldMapper)
-	assert.Equal(t, len(DefaultMapper.Mappers), len(cpy.Mappers))
-	for k, v := range DefaultMapper.Mappers {
+	cpy := Default.Copy()
+	assert.Equal(t, Default.Tag, cpy.Tag)
+	assert.Equal(t, Default.ByteOrder, cpy.ByteOrder)
+	assert.Equal(t, &Default.FieldMapper, &cpy.FieldMapper)
+	assert.Equal(t, len(Default.Mappers), len(cpy.Mappers))
+	for k, v := range Default.Mappers {
 		rv1 := reflect.ValueOf(v)
 		rv2 := reflect.ValueOf(cpy.Mappers[k])
 		assert.Equal(t, rv1.Pointer(), rv2.Pointer())

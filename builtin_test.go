@@ -353,7 +353,7 @@ func TestStrictTypes(t *testing.T) {
 		mySlice  []string
 		myArray  [1]string
 	)
-	m := DefaultMapper.Copy()
+	m := Default.Copy()
 	m.StrictTypes = true
 
 	tests := []struct {
