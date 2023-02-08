@@ -246,15 +246,13 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 		return
 	}
 
-	// If none of the types implements MapTo or MapFrom, and there are no
-	// mapper providers for them, try to use mapper for built-in types.
+	// If there are no custom mappers and hooks, use the default mappers.
 	tm.MapFunc = builtInTypesMapper(m, src, dst)
 	return
 }
 
-// srcValue unpacks values from pointers and interfaces until it reaches a non-pointer,
-// non-interface value or value that implements the MapFrom interface or a type that
-// has a custom mapper.
+// srcValue unpacks values from pointers and interfaces until it reaches a
+// non-pointer or non-interface value, or a type that has a custom mapper.
 func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
 	if m.Hooks.SourceValueHook != nil {
 		if v := m.Hooks.SourceValueHook(v); v.IsValid() {
@@ -271,11 +269,10 @@ func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
 }
 
 // dstValue unpacks values from pointers and interfaces until it reaches a
-// settable non-pointer or non-interface value, value that implements the
-// MapTo interface, has a custom mapper, or a value that is a map, slice or
-// array. It returns an invalid value if it cannot find a value that meets
-// these conditions. If the value is a pointer, map or slice, it will be
-// initialized if needed.
+// settable non-pointer or non-interface value, value that has a custom mapper,
+// or a value that is a map, slice or array. It returns an invalid value if it
+// cannot find a value that meets these conditions. If the value is a pointer,
+// map or slice, it will be initialized if needed.
 func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 	if m.Hooks.DestinationValueHook != nil {
 		if v := m.Hooks.DestinationValueHook(v); v.IsValid() {
@@ -346,11 +343,7 @@ func (m *Mapper) parseTag(f reflect.StructField) (fields string, skip bool) {
 // isSimpleType indicates whether a type is simple type.
 //
 // A type is considered simple if it is a built-in type, or it is a slice,
-// array or map that is composed of build-in types. In other words, it is a
-// type that cannot implement the MapFrom or MapTo interfaces nor contain
-// fields or elements that can implement these interfaces, e.g. a custom type
-// like `type MyInt int` is not considered simple because it can implement
-// interfaces.
+// array or map that is composed of build-in types.
 //
 // Structs are never considered simple because they are rarely used without a
 // custom type, and verifying if a struct is simple is too expensive.

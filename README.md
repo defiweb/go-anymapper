@@ -211,6 +211,9 @@ func (v *Val) MapTo(m *anymapper.Mapper, x reflect.Value) error {
 func main() {
 	var a int = 42
 	var b Val
+	
+	// Enable MapTo and MapFrom interfaces:
+	anymapper.Default.Hooks = anymapper.MappingInterfaceHooks
 
 	err := anymapper.Map(a, &b)
 	if err != nil {
