@@ -387,23 +387,44 @@ func isSimpleType(p reflect.Type) bool {
 	return false
 }
 
+func mapDefault(m *Mapper, src, dst reflect.Value) error {
+	dstTyp := dst.Type()
+	srcTyp := src.Type()
+	if dstTyp == anyTy {
+		return mapAny(m, src, dst)
+	}
+	if srcTyp == dstTyp && isSimpleType(srcTyp) && dst.CanSet() {
+		return mapDirect(m, src, dst)
+	}
+	auxVal := reflect.New(dstTyp).Elem()
+	auxDst := m.dstValue(auxVal)
+	if err := m.MapRefl(src, auxDst); err != nil {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "")
+	}
+	dst.Set(auxVal)
+	return nil
+}
+
+// mapAny map src to dst assuming dst is an empty interface.
 func mapAny(m *Mapper, src, dst reflect.Value) error {
 	if !dst.IsNil() && !dst.Elem().CanSet() {
 		// Mapper always tries to reuse the destination value if possible, but
 		// if destination value is not settable, we need to cheat a little and
 		// create a new value of the same type and then set it back to the
 		// destination.
-		aux := reflect.New(dst.Elem().Type())
-		if err := m.MapRefl(src, aux); err != nil {
+		auxVal := reflect.New(dst.Elem().Type())
+		auxDst := m.dstValue(auxVal)
+		if err := m.MapRefl(src, auxDst); err != nil {
 			return NewInvalidMappingError(src.Type(), dst.Type(), "")
 		}
-		dst.Set(aux.Elem())
+		dst.Set(auxVal.Elem())
 		return nil
 	}
 	dst.Set(src)
 	return nil
 }
 
+// mapDirect maps src to dst using a direct assignment.
 func mapDirect(_ *Mapper, src, dst reflect.Value) error {
 	dst.Set(src)
 	return nil
@@ -416,14 +437,20 @@ type typeMapper struct {
 }
 
 func (tm *typeMapper) match(src, dst reflect.Type) bool {
+	if tm == nil {
+		return false
+	}
 	return tm.SrcType == src && tm.DstType == dst
 }
 
 func (tm *typeMapper) mapRefl(m *Mapper, src, dst reflect.Value) error {
-	if tm.MapFunc != nil {
-		return tm.MapFunc(m, src, dst)
+	if tm == nil {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "unknown mapper")
 	}
-	return NewInvalidMappingError(src.Type(), dst.Type(), "")
+	if tm.MapFunc == nil {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "")
+	}
+	return tm.MapFunc(m, src, dst)
 }
 
 // InvalidSrcErr is returned when reflect.IsValid returns false for the source

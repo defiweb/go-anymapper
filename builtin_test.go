@@ -2,6 +2,7 @@ package anymapper
 
 import (
 	"math"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -588,4 +589,66 @@ func TestTags(t *testing.T) {
 			Foo: 1,
 		}, dst)
 	})
+}
+
+func TestMapToStruct(t *testing.T) {
+	type Str struct {
+		Foo int
+		Bar *big.Int
+		Baz any
+	}
+	dst := Str{
+		Baz: new(big.Int),
+	}
+	err := Map(map[string]any{
+		"Foo": 1,
+		"Bar": 2,
+		"Baz": 3,
+	}, &dst)
+	assert.NoError(t, err)
+	assert.Equal(t, Str{
+		Foo: 1,
+		Bar: big.NewInt(2),
+		Baz: big.NewInt(3),
+	}, dst)
+}
+
+func TestMapToMap(t *testing.T) {
+	dst := map[string]any{
+		"foo": nil,
+		"bar": new(big.Int),
+	}
+	err := Map(map[string]any{
+		"foo": 1,
+		"bar": 2,
+	}, &dst)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"foo": 1,
+		"bar": big.NewInt(2),
+	}, dst)
+}
+
+func TestStructToMap(t *testing.T) {
+	type Str struct {
+		Foo int
+		Bar *big.Int
+		Baz any
+	}
+	dst := map[string]any{
+		"Foo": nil,
+		"Bar": new(big.Int),
+		"Baz": new(big.Int),
+	}
+	err := Map(Str{
+		Foo: 1,
+		Bar: big.NewInt(2),
+		Baz: big.NewInt(3),
+	}, &dst)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"Foo": 1,
+		"Bar": big.NewInt(2),
+		"Baz": big.NewInt(3),
+	}, dst)
 }
