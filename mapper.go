@@ -254,6 +254,9 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 // srcValue unpacks values from pointers and interfaces until it reaches a
 // non-pointer or non-interface value, or a type that has a custom mapper.
 func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
+	if !v.IsValid() {
+		return v
+	}
 	if m.Hooks.SourceValueHook != nil {
 		if v := m.Hooks.SourceValueHook(v); v.IsValid() {
 			return v
@@ -274,6 +277,9 @@ func (m *Mapper) srcValue(v reflect.Value) reflect.Value {
 // cannot find a value that meets these conditions. If the value is a pointer,
 // map or slice, it will be initialized if needed.
 func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
+	if !v.IsValid() {
+		return v
+	}
 	if m.Hooks.DestinationValueHook != nil {
 		if v := m.Hooks.DestinationValueHook(v); v.IsValid() {
 			return v

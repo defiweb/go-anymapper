@@ -86,7 +86,7 @@ those fields.
 
 ### Strict types
 
-If Mapper.StrictTypes is set to true, strict type checking will be enforced for the mapping process. This means that the
+If `Mapper.StrictTypes` is set to true, strict type checking will be enforced for the mapping process. This means that the
 source and destination types must be exactly the same for the mapping to be successful. However, mapping between
 different data structures, such as `struct` ⇔ `struct`, `struct` ⇔ `map` and `map` ⇔ `map` is always allowed. If the
 destination type is an empty interface, the source value will be assigned to it regardless of the strict type check
