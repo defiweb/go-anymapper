@@ -210,14 +210,6 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 		return
 	}
 
-	// If destination type is an any interface, map the value directly using
-	// reflect.Set, if the destination interface is not nil, map the value
-	// to the same type as the value in the interface.
-	if dst == anyTy {
-		tm.MapFunc = mapAny
-		return
-	}
-
 	// Try to find a mapper using mapper providers. It looks for providers
 	// for src and dst types. First it tries to use providers for src. If
 	// it returns a mapper, it uses it. If it returns nil, it tries to use
@@ -243,6 +235,14 @@ func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
 		}
 	}
 	if hasSrcMapper || hasDstMapper {
+		return
+	}
+
+	// If destination type is an any interface, map the value directly using
+	// reflect.Set, if the destination interface is not nil, map the value
+	// to the same type as the value in the interface.
+	if dst == anyTy {
+		tm.MapFunc = mapAny
 		return
 	}
 

@@ -72,6 +72,27 @@ func TestCustomMapFunc(t *testing.T) {
 	})
 }
 
+func TestCustomMapFuncAny(t *testing.T) {
+	type customType struct {
+		Foo string
+	}
+	typ := reflect.TypeOf(customType{})
+	m := Default.Copy()
+	m.Mappers[typ] = func(m *Mapper, src, dst reflect.Type) MapFunc {
+		if dst == anyTy {
+			return func(m *Mapper, src, dst reflect.Value) error {
+				dst.Set(reflect.ValueOf(src.FieldByName("Foo").Interface()))
+				return nil
+			}
+		}
+		return nil
+	}
+	src := customType{Foo: "foo"}
+	dst := any(nil)
+	require.NoError(t, m.Map(src, &dst))
+	assert.Equal(t, "foo", dst.(string))
+}
+
 func TestFieldMapper(t *testing.T) {
 	m := Default.Copy()
 	m.FieldMapper = func(name string) string {
