@@ -361,10 +361,10 @@ func Benchmark(b *testing.B) {
 Results:
 
 ```
-BenchmarK/anymapper/map-struct         	  892472	      1271 ns/op
-Benchmark/anymapper/struct-map         	  903970	      1301 ns/op
-BenchmarK/mapstructure/map-struct      	  265148	      4682 ns/op
-Benchmark/mapstructure/struct-map      	 1000000	      1070 ns/op
+BenchmarK/anymapper/map-struct         	  972992	      1174 ns/op
+Benchmark/anymapper/struct-map         	  903348	      1311 ns/op
+BenchmarK/mapstructure/map-struct      	  339668	      3501 ns/op
+Benchmark/mapstructure/struct-map      	 1354458	      889.5 ns/op
 ```
 
 ## Documentation
