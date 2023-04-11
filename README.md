@@ -86,7 +86,7 @@ those fields.
 
 ### Strict types
 
-If `Mapper.StrictTypes` is set to true, strict type checking will be enforced for the mapping process. This means that the
+If `Context.StrictTypes` is set to true, strict type checking will be enforced for the mapping process. This means that the
 source and destination types must be exactly the same for the mapping to be successful. However, mapping between
 different data structures, such as `struct` ⇔ `struct`, `struct` ⇔ `map` and `map` ⇔ `map` is always allowed. If the
 destination type is an empty interface, the source value will be assigned to it regardless of the strict type check
@@ -246,14 +246,14 @@ func main() {
 	var b Val
 
 	typ := reflect.TypeOf(Val{})
-	anymapper.DefaultMapper.Mappers[typ] = func(m *anymapper.Mapper, src, dst reflect.Type) anymapper.MapFunc {
+	anymapper.Default.Mappers[typ] = func(m *anymapper.Mapper, src, dst reflect.Type) anymapper.MapFunc {
 		if src == typ {
-			return func(m *anymapper.Mapper, src, dst reflect.Value) error {
+			return func(m *anymapper.Mapper, _ *anymapper.Context, src, dst reflect.Value) error {
 				return m.MapRefl(src.FieldByName("X"), dst)
 			}
 		}
 		if dst == typ {
-			return func(m *anymapper.Mapper, src, dst reflect.Value) error {
+			return func(m *anymapper.Mapper, _ *anymapper.Context, src, dst reflect.Value) error {
 				return m.MapRefl(src, reflect.ValueOf(&dst.Addr().Interface().(*Val).X))
 			}
 		}
