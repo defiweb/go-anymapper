@@ -354,8 +354,6 @@ func TestStrictTypes(t *testing.T) {
 		mySlice  []string
 		myArray  [1]string
 	)
-	m := Default.Copy()
-	m.StrictTypes = true
 
 	tests := []struct {
 		name string
@@ -447,7 +445,7 @@ func TestStrictTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := m.Map(tt.src, tt.dst)
+			err := MapContext(Default.Context.WithStrictTypes(true), tt.src, tt.dst)
 			if tt.err {
 				assert.Error(t, err)
 			} else {

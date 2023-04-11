@@ -34,12 +34,12 @@ func TestCustomMapFunc(t *testing.T) {
 	m := Default.Copy()
 	m.Mappers[typ] = func(m *Mapper, src, dst reflect.Type) MapFunc {
 		if src == typ {
-			return func(m *Mapper, src, dst reflect.Value) error {
+			return func(m *Mapper, _ *Context, src, dst reflect.Value) error {
 				return m.MapRefl(src.FieldByName("Foo"), dst)
 			}
 		}
 		if dst == typ {
-			return func(m *Mapper, src, dst reflect.Value) error {
+			return func(m *Mapper, _ *Context, src, dst reflect.Value) error {
 				return m.MapRefl(src, reflect.ValueOf(&dst.Addr().Interface().(*customType).Foo))
 			}
 		}
@@ -80,7 +80,7 @@ func TestCustomMapFuncAny(t *testing.T) {
 	m := Default.Copy()
 	m.Mappers[typ] = func(m *Mapper, src, dst reflect.Type) MapFunc {
 		if dst == anyTy {
-			return func(m *Mapper, src, dst reflect.Value) error {
+			return func(m *Mapper, _ *Context, src, dst reflect.Value) error {
 				dst.Set(reflect.ValueOf(src.FieldByName("Foo").Interface()))
 				return nil
 			}
@@ -116,7 +116,7 @@ func TestFieldMapper(t *testing.T) {
 
 func TestEmptyTag(t *testing.T) {
 	m := Default.Copy()
-	m.Tag = ""
+	m.Context.Tag = ""
 	type Src struct {
 		Foo string `map:"bar"`
 	}
@@ -130,8 +130,7 @@ func TestEmptyTag(t *testing.T) {
 
 func TestCopy(t *testing.T) {
 	cpy := Default.Copy()
-	assert.Equal(t, Default.Tag, cpy.Tag)
-	assert.Equal(t, Default.ByteOrder, cpy.ByteOrder)
+	assert.Equal(t, Default.Context, cpy.Context)
 	assert.Equal(t, &Default.FieldMapper, &cpy.FieldMapper)
 	assert.Equal(t, len(Default.Mappers), len(cpy.Mappers))
 	for k, v := range Default.Mappers {

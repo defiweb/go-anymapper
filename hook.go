@@ -61,13 +61,13 @@ var MappingInterfaceHooks = Hooks{
 
 // mapFromInterface is the MapFunc that is used to map a value using the
 // MapFrom interface.
-func mapFromInterface(m *Mapper, src, dst reflect.Value) error {
+func mapFromInterface(m *Mapper, _ *Context, src, dst reflect.Value) error {
 	return dst.Interface().(MapFrom).MapFrom(m, src)
 }
 
 // mapToInterface is the MapFunc that is used to map a value using the
 // MapTo interface.
-func mapToInterface(m *Mapper, src, dst reflect.Value) error {
+func mapToInterface(m *Mapper, _ *Context, src, dst reflect.Value) error {
 	return src.Interface().(MapTo).MapTo(m, dst)
 }
 

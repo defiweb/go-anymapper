@@ -14,12 +14,9 @@ var (
 	bigRatTy   = reflect.TypeOf((*big.Rat)(nil)).Elem()
 )
 
-func timeTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
+func timeTypeMapper(_ *Mapper, src, dst reflect.Type) MapFunc {
 	if src == dst {
 		return mapDirect
-	}
-	if m.StrictTypes && src != dst {
-		return nil
 	}
 	switch {
 	case src == timeTy:
@@ -68,12 +65,9 @@ func timeTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
 	return nil
 }
 
-func bigIntTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
+func bigIntTypeMapper(_ *Mapper, src, dst reflect.Type) MapFunc {
 	if src == dst {
 		return mapDirect
-	}
-	if m.StrictTypes && src != dst {
-		return nil
 	}
 	switch {
 	case src == bigIntTy:
@@ -122,12 +116,9 @@ func bigIntTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
 	return nil
 }
 
-func bigRatTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
+func bigRatTypeMapper(_ *Mapper, src, dst reflect.Type) MapFunc {
 	if src == bigRatTy && dst == bigRatTy {
 		return mapDirect
-	}
-	if m.StrictTypes && src != dst {
-		return nil
 	}
 	switch {
 	case src == bigRatTy:
@@ -150,12 +141,9 @@ func bigRatTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
 	return nil
 }
 
-func bigFloatTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
+func bigFloatTypeMapper(_ *Mapper, src, dst reflect.Type) MapFunc {
 	if src == dst {
 		return mapDirect
-	}
-	if m.StrictTypes && src != dst {
-		return nil
 	}
 	switch {
 	case src == bigFloatTy:
@@ -196,12 +184,18 @@ func bigFloatTypeMapper(m *Mapper, src, dst reflect.Type) MapFunc {
 	return nil
 }
 
-func mapTimeToString(_ *Mapper, src, dst reflect.Value) error {
+func mapTimeToString(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.SetString(src.Interface().(time.Time).Format(time.RFC3339))
 	return nil
 }
 
-func mapTimeToInt(_ *Mapper, src, dst reflect.Value) error {
+func mapTimeToInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	unix := src.Interface().(time.Time).Unix()
 	if dst.OverflowInt(unix) {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
@@ -210,7 +204,10 @@ func mapTimeToInt(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapTimeToUint(_ *Mapper, src, dst reflect.Value) error {
+func mapTimeToUint(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	unix := src.Interface().(time.Time).Unix()
 	if dst.OverflowUint(uint64(unix)) {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
@@ -219,7 +216,10 @@ func mapTimeToUint(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapTimeToFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapTimeToFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	tm := src.Interface().(time.Time)
 	unix := tm.Unix()
 	nano := tm.Nanosecond()
@@ -227,13 +227,19 @@ func mapTimeToFloat(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapTimeToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapTimeToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	unix := src.Interface().(time.Time).Unix()
 	dst.Set(reflect.ValueOf(big.NewInt(unix)).Elem())
 	return nil
 }
 
-func mapTimeToBigFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapTimeToBigFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	tm := src.Interface().(time.Time)
 	unix := tm.Unix()
 	nano := tm.Nanosecond()
@@ -245,7 +251,10 @@ func mapTimeToBigFloat(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapStringToTime(_ *Mapper, src, dst reflect.Value) error {
+func mapStringToTime(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	tm, err := time.Parse(time.RFC3339, src.String())
 	if err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), err.Error())
@@ -254,19 +263,28 @@ func mapStringToTime(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapIntToTime(_ *Mapper, src, dst reflect.Value) error {
+func mapIntToTime(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	tm := time.Unix(src.Int(), 0).UTC()
 	dst.Set(reflect.ValueOf(tm))
 	return nil
 }
 
-func mapUintToTime(_ *Mapper, src, dst reflect.Value) error {
+func mapUintToTime(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	tm := time.Unix(int64(src.Uint()), 0).UTC()
 	dst.Set(reflect.ValueOf(tm))
 	return nil
 }
 
-func mapFloatToTime(_ *Mapper, src, dst reflect.Value) error {
+func mapFloatToTime(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	f := src.Float()
 	unix := int64(f)
 	nano := int64((f - float64(unix)) * 1e9)
@@ -275,13 +293,19 @@ func mapFloatToTime(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigIntToTime(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToTime(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	tm := time.Unix(src.Addr().Interface().(*big.Int).Int64(), 0).UTC()
 	dst.Set(reflect.ValueOf(tm))
 	return nil
 }
 
-func mapBigFloatToTime(_ *Mapper, src, dst reflect.Value) error {
+func mapBigFloatToTime(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	bf := src.Addr().Interface().(*big.Float)
 	unix, _ := bf.Int(nil)
 	frac := new(big.Float).Sub(bf, new(big.Float).SetInt(unix))
@@ -290,7 +314,10 @@ func mapBigFloatToTime(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapFromTimeViaInt64(m *Mapper, src, dst reflect.Value) error {
+func mapFromTimeViaInt64(m *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	aux := src.Interface().(time.Time).Unix()
 	if err := m.MapRefl(reflect.ValueOf(aux), dst); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
@@ -298,7 +325,10 @@ func mapFromTimeViaInt64(m *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapToTimeViaInt64(m *Mapper, src, dst reflect.Value) error {
+func mapToTimeViaInt64(m *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	var aux int64
 	if err := m.MapRefl(src, reflect.ValueOf(&aux)); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
@@ -307,12 +337,18 @@ func mapToTimeViaInt64(m *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigIntToBool(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToBool(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.SetBool(src.Addr().Interface().(*big.Int).Cmp(big.NewInt(0)) != 0)
 	return nil
 }
 
-func mapBigIntToInt(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v := src.Addr().Interface().(*big.Int)
 	n := v.Int64()
 	if !v.IsInt64() || dst.OverflowInt(n) {
@@ -322,7 +358,10 @@ func mapBigIntToInt(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigIntToUint(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToUint(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v := src.Addr().Interface().(*big.Int)
 	n := v.Uint64()
 	if !v.IsUint64() || dst.OverflowUint(n) {
@@ -332,7 +371,10 @@ func mapBigIntToUint(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigIntToFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v := src.Addr().Interface().(*big.Int)
 	n, a := new(big.Float).SetInt(v).Float64()
 	if dst.OverflowFloat(n) || (math.IsInf(n, 0) && (a == big.Below || a == big.Above)) {
@@ -342,12 +384,18 @@ func mapBigIntToFloat(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigIntToString(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToString(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.SetString(src.Addr().Interface().(*big.Int).String())
 	return nil
 }
 
-func mapBigIntToBytes(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToBytes(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v := src.Addr().Interface().(*big.Int)
 	if v.Sign() < 0 {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "cannot convert negative big.Int to bytes")
@@ -356,12 +404,18 @@ func mapBigIntToBytes(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigIntToBigFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapBigIntToBigFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.Set(reflect.ValueOf(new(big.Float).SetInt(src.Addr().Interface().(*big.Int))).Elem())
 	return nil
 }
 
-func mapBoolToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapBoolToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	if src.Bool() {
 		dst.Set(reflect.ValueOf(big.NewInt(1)).Elem())
 	} else {
@@ -370,23 +424,38 @@ func mapBoolToBigInt(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapIntToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapIntToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.Set(reflect.ValueOf(big.NewInt(src.Int())).Elem())
 	return nil
 }
 
-func mapUintToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapUintToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.Set(reflect.ValueOf(big.NewInt(0).SetUint64(src.Uint())).Elem())
 	return nil
 }
 
-func mapFloatToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapFloatToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v, _ := new(big.Float).SetFloat64(src.Float()).Int(nil)
 	dst.Set(reflect.ValueOf(new(big.Int).Set(v)).Elem())
 	return nil
 }
 
-func mapStringToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapStringToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v, ok := new(big.Int).SetString(src.String(), 0)
 	if !ok {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "invalid string")
@@ -395,18 +464,27 @@ func mapStringToBigInt(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBytesToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapBytesToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.Set(reflect.ValueOf(new(big.Int).SetBytes(src.Bytes())).Elem())
 	return nil
 }
 
-func mapBigFloatToBigInt(_ *Mapper, src, dst reflect.Value) error {
+func mapBigFloatToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v, _ := src.Addr().Interface().(*big.Float).Int(nil)
 	dst.Set(reflect.ValueOf(new(big.Int).Set(v)).Elem())
 	return nil
 }
 
-func mapBigFloatToBool(_ *Mapper, src, dst reflect.Value) error {
+func mapBigFloatToBool(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v := src.Addr().Interface().(*big.Float)
 	if v.Sign() == 0 {
 		dst.SetBool(false)
@@ -416,7 +494,10 @@ func mapBigFloatToBool(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigFloatToInt(_ *Mapper, src, dst reflect.Value) error {
+func mapBigFloatToInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v, _ := src.Addr().Interface().(*big.Float).Int(nil)
 	n := v.Int64()
 	if !v.IsInt64() || dst.OverflowInt(n) {
@@ -426,7 +507,10 @@ func mapBigFloatToInt(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigFloatToUint(_ *Mapper, src, dst reflect.Value) error {
+func mapBigFloatToUint(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v, _ := src.Addr().Interface().(*big.Float).Int(nil)
 	n := v.Uint64()
 	if !v.IsUint64() || dst.OverflowUint(n) {
@@ -436,7 +520,10 @@ func mapBigFloatToUint(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigFloatToFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapBigFloatToFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v := src.Addr().Interface().(*big.Float)
 	n, a := v.Float64()
 	if dst.OverflowFloat(n) || (math.IsInf(n, 0) && (a == big.Below || a == big.Above)) {
@@ -446,12 +533,18 @@ func mapBigFloatToFloat(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigFloatToString(_ *Mapper, src, dst reflect.Value) error {
+func mapBigFloatToString(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.SetString(src.Addr().Interface().(*big.Float).String())
 	return nil
 }
 
-func mapBoolToBigFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapBoolToBigFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	switch src.Bool() {
 	case true:
 		dst.Set(reflect.ValueOf(big.NewFloat(1)).Elem())
@@ -461,22 +554,34 @@ func mapBoolToBigFloat(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapIntToBigFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapIntToBigFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.Set(reflect.ValueOf(new(big.Float).SetInt64(src.Int())).Elem())
 	return nil
 }
 
-func mapUintToBigFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapUintToBigFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.Set(reflect.ValueOf(new(big.Float).SetUint64(src.Uint())).Elem())
 	return nil
 }
 
-func mapFloatToBigFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapFloatToBigFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.Set(reflect.ValueOf(new(big.Float).SetFloat64(src.Float())).Elem())
 	return nil
 }
 
-func mapStringToBigFloat(_ *Mapper, src, dst reflect.Value) error {
+func mapStringToBigFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v, ok := new(big.Float).SetString(src.String())
 	if !ok {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "string is not a valid float number")
@@ -485,12 +590,18 @@ func mapStringToBigFloat(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapBigRatToString(_ *Mapper, src, dst reflect.Value) error {
+func mapBigRatToString(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	dst.SetString(src.Addr().Interface().(*big.Rat).String())
 	return nil
 }
 
-func mapBigRatToSliceOrArray(m *Mapper, src, dst reflect.Value) error {
+func mapBigRatToSliceOrArray(m *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	if dst.Kind() == reflect.Slice {
 		dst.Set(reflect.MakeSlice(dst.Type(), 2, 2))
 	}
@@ -507,7 +618,10 @@ func mapBigRatToSliceOrArray(m *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapStringToBigRat(_ *Mapper, src, dst reflect.Value) error {
+func mapStringToBigRat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	v, ok := new(big.Rat).SetString(src.String())
 	if !ok {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "string is not a valid rational number")
@@ -516,7 +630,10 @@ func mapStringToBigRat(_ *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapSliceOrArrayToBigRat(m *Mapper, src, dst reflect.Value) error {
+func mapSliceOrArrayToBigRat(m *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	if src.Len() != 2 {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "array must have length 2")
 	}
@@ -531,7 +648,10 @@ func mapSliceOrArrayToBigRat(m *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapFromBigRatViaBigFloat(m *Mapper, src, dst reflect.Value) error {
+func mapFromBigRatViaBigFloat(m *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	aux := new(big.Float).SetRat(src.Addr().Interface().(*big.Rat))
 	if err := m.MapRefl(reflect.ValueOf(aux), dst); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
@@ -539,7 +659,10 @@ func mapFromBigRatViaBigFloat(m *Mapper, src, dst reflect.Value) error {
 	return nil
 }
 
-func mapToBigRatViaBigFloat(m *Mapper, src, dst reflect.Value) error {
+func mapToBigRatViaBigFloat(m *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if ctx.StrictTypes {
+		return NewStrictMappingError(src.Type(), dst.Type())
+	}
 	aux := reflect.New(bigFloatTy).Elem()
 	if err := m.MapRefl(src, aux); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")

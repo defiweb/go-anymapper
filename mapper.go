@@ -12,7 +12,7 @@ import (
 // MapFunc is a function that maps a src value to a dst value. It returns an
 // error if the mapping is not possible. The src and dst values are never
 // pointers.
-type MapFunc func(m *Mapper, src, dst reflect.Value) error
+type MapFunc func(m *Mapper, ctx *Context, src, dst reflect.Value) error
 
 // MapFuncProvider is a function that returns a MapFunc for given src and dst
 // types. If mapping is not supported, it returns nil.
@@ -25,14 +25,78 @@ type MapFuncProvider func(m *Mapper, src, dst reflect.Type) MapFunc
 // default mapper and modify the copy.
 var Default = New()
 
-// Mapper hold the mapper configuration.
-type Mapper struct {
-	// StrictTypes enabled strict type checking.
+// Context is a context that is passed to the mapping functions. It can be
+// used to pass additional information to the mapping functions or to change
+// the behavior of the mapper without modifying the global state or creating
+// a copy of the mapper.
+type Context struct {
+	// StrictTypes enables strict type checking. If enabled, the source and
+	// destination types must be exactly the same for the mapping to be
+	// successful. However, mapping between different data structures, such as
+	// `struct` ⇔ `struct`, `struct` ⇔ `map` and `map` ⇔ `map` is always
+	// allowed. If the destination type is an empty interface, the source value
+	// will be assigned to it regardless of the strict type check setting.
 	StrictTypes bool
 
 	// Tag is the name of the struct tag that is used by the mapper to
 	// determine the name of the field to map to.
 	Tag string
+
+	// ByteOrder is the byte order used to map numbers to and from byte slices.
+	ByteOrder binary.ByteOrder
+
+	// DisableCache disables the cache of the type mappers.
+	DisableCache bool
+
+	// Custom is a custom value that can be used to pass additional information
+	// to the mapping functions.
+	Custom any
+}
+
+// WithStrictTypes returns a copy of the context with the StrictTypes field
+// set to the given value.
+func (c *Context) WithStrictTypes(strictTypes bool) *Context {
+	cpy := *c
+	cpy.StrictTypes = strictTypes
+	return &cpy
+}
+
+// WithTag returns a copy of the context with the Tag field set to the given
+// value.
+func (c *Context) WithTag(tag string) *Context {
+	cpy := *c
+	cpy.Tag = tag
+	return &cpy
+}
+
+// WithByteOrder returns a copy of the context with the ByteOrder field set
+// to the given value.
+func (c *Context) WithByteOrder(byteOrder binary.ByteOrder) *Context {
+	cpy := *c
+	cpy.ByteOrder = byteOrder
+	return &cpy
+}
+
+// WithDisableCache returns a copy of the context with the DisableCache field
+// set to the given value.
+func (c *Context) WithDisableCache(disableCache bool) *Context {
+	cpy := *c
+	cpy.DisableCache = disableCache
+	return &cpy
+}
+
+// WithCustom returns a copy of the context with the Custom field set to the
+// given value.
+func (c *Context) WithCustom(custom any) *Context {
+	cpy := *c
+	cpy.Custom = custom
+	return &cpy
+}
+
+// Mapper hold the mapper configuration.
+type Mapper struct {
+	// Context is the default context used by the mapper.
+	Context *Context
 
 	// FieldMapper is a function that maps a struct field name to another name,
 	// it is used only when the tag is not present.
@@ -51,12 +115,6 @@ type Mapper struct {
 	// Hooks are functions that are called during the mapping process. They
 	// can modify the behavior of the mapper. See Hooks for more information.
 	Hooks Hooks
-
-	// ByteOrder is the byte order used to map numbers to and from byte slices.
-	ByteOrder binary.ByteOrder
-
-	// DisableCache disables the cache of the type mappers.
-	DisableCache bool
 
 	// Cache:
 	cacheMu  sync.Mutex
@@ -95,8 +153,10 @@ type Hooks struct {
 // New returns a new Mapper with default configuration.
 func New() *Mapper {
 	return &Mapper{
-		Tag:       `map`,
-		ByteOrder: binary.BigEndian,
+		Context: &Context{
+			Tag:       `map`,
+			ByteOrder: binary.BigEndian,
+		},
 		Mappers: map[reflect.Type]MapFuncProvider{
 			timeTy:     timeTypeMapper,
 			bigIntTy:   bigIntTypeMapper,
@@ -114,6 +174,13 @@ func Map(src, dst any) error {
 	return Default.Map(src, dst)
 }
 
+// MapContext maps the source value to the destination value.
+//
+// It is shorthand for Default.MapContext(ctx, src, dst).
+func MapContext(ctx *Context, src, dst any) error {
+	return Default.MapContext(ctx, src, dst)
+}
+
 // MapRefl maps the source value to the destination value.
 //
 // It is shorthand for Default.MapRefl(src, dst).
@@ -121,21 +188,33 @@ func MapRefl(src, dst reflect.Value) error {
 	return Default.MapRefl(src, dst)
 }
 
+// MapReflContext maps the source value to the destination value.
+//
+// It is shorthand for Default.MapReflContext(ctx, src, dst).
+func MapReflContext(ctx *Context, src, dst reflect.Value) error {
+	return Default.MapReflContext(ctx, src, dst)
+}
+
 // Map maps the source value to the destination value.
 func (m *Mapper) Map(src, dst any) error {
-	srcVal := m.srcValue(reflect.ValueOf(src))
-	dstVal := m.dstValue(reflect.ValueOf(dst))
-	if !srcVal.IsValid() {
-		return InvalidSrcErr
-	}
-	if !dstVal.IsValid() {
-		return InvalidDstErr
-	}
-	return m.mapperFor(srcVal.Type(), dstVal.Type()).mapRefl(m, srcVal, dstVal)
+	return m.MapRefl(reflect.ValueOf(src), reflect.ValueOf(dst))
+}
+
+// MapContext maps the source value to the destination value.
+func (m *Mapper) MapContext(ctx *Context, src, dst any) error {
+	return m.MapReflContext(ctx, reflect.ValueOf(src), reflect.ValueOf(dst))
 }
 
 // MapRefl maps the source value to the destination value.
 func (m *Mapper) MapRefl(src, dst reflect.Value) error {
+	return m.MapReflContext(m.Context, src, dst)
+}
+
+// MapReflContext maps the source value to the destination value.
+func (m *Mapper) MapReflContext(ctx *Context, src, dst reflect.Value) error {
+	if ctx == nil {
+		ctx = m.Context
+	}
 	srcVal := m.srcValue(src)
 	dstVal := m.dstValue(dst)
 	if !srcVal.IsValid() {
@@ -144,15 +223,20 @@ func (m *Mapper) MapRefl(src, dst reflect.Value) error {
 	if !dstVal.IsValid() {
 		return InvalidDstErr
 	}
-	return m.mapperFor(srcVal.Type(), dstVal.Type()).mapRefl(m, srcVal, dstVal)
+	return m.mapperFor(ctx, srcVal.Type(), dstVal.Type()).mapRefl(m, ctx, srcVal, dstVal)
 }
 
 // Copy creates a copy of the current Mapper with the same configuration.
 func (m *Mapper) Copy() *Mapper {
 	cpy := &Mapper{
-		Tag:         m.Tag,
+		Context: &Context{
+			StrictTypes:  m.Context.StrictTypes,
+			Tag:          m.Context.Tag,
+			ByteOrder:    m.Context.ByteOrder,
+			DisableCache: m.Context.DisableCache,
+			Custom:       m.Context.Custom,
+		},
 		FieldMapper: m.FieldMapper,
-		ByteOrder:   m.ByteOrder,
 		Hooks:       m.Hooks,
 		cacheMap:    make(map[typePair]*typeMapper, 0),
 	}
@@ -167,8 +251,8 @@ func (m *Mapper) Copy() *Mapper {
 
 // mapperFor returns the typeMapper that can map values of the given types.
 // If mapping is not possible, the returned typeMapper has a nil MapFunc.
-func (m *Mapper) mapperFor(src, dst reflect.Type) (tm *typeMapper) {
-	if !m.DisableCache {
+func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) (tm *typeMapper) {
+	if !ctx.DisableCache {
 		m.cacheMu.Lock()
 		if v, ok := m.cacheMap[typePair{src: src, dst: dst}]; ok {
 			m.cacheMu.Unlock()
@@ -331,8 +415,8 @@ func (m *Mapper) initValue(v reflect.Value) {
 
 // parseTag parses the tag of the given field and returns the tag name and
 // whether the field should be skipped.
-func (m *Mapper) parseTag(f reflect.StructField) (fields string, skip bool) {
-	tag, ok := f.Tag.Lookup(m.Tag)
+func (m *Mapper) parseTag(ctx *Context, f reflect.StructField) (fields string, skip bool) {
+	tag, ok := f.Tag.Lookup(ctx.Tag)
 	if !ok {
 		if m.FieldMapper != nil {
 			return m.FieldMapper(f.Name), false
@@ -393,26 +477,8 @@ func isSimpleType(p reflect.Type) bool {
 	return false
 }
 
-func mapDefault(m *Mapper, src, dst reflect.Value) error {
-	dstTyp := dst.Type()
-	srcTyp := src.Type()
-	if dstTyp == anyTy {
-		return mapAny(m, src, dst)
-	}
-	if srcTyp == dstTyp && isSimpleType(srcTyp) && dst.CanSet() {
-		return mapDirect(m, src, dst)
-	}
-	auxVal := reflect.New(dstTyp).Elem()
-	auxDst := m.dstValue(auxVal)
-	if err := m.MapRefl(src, auxDst); err != nil {
-		return NewInvalidMappingError(src.Type(), dst.Type(), "")
-	}
-	dst.Set(auxVal)
-	return nil
-}
-
 // mapAny map src to dst assuming dst is an empty interface.
-func mapAny(m *Mapper, src, dst reflect.Value) error {
+func mapAny(m *Mapper, _ *Context, src, dst reflect.Value) error {
 	if !dst.IsNil() && !dst.Elem().CanSet() {
 		// Mapper always tries to reuse the destination value if possible, but
 		// if destination value is not settable, we need to cheat a little and
@@ -431,7 +497,7 @@ func mapAny(m *Mapper, src, dst reflect.Value) error {
 }
 
 // mapDirect maps src to dst using a direct assignment.
-func mapDirect(_ *Mapper, src, dst reflect.Value) error {
+func mapDirect(_ *Mapper, _ *Context, src, dst reflect.Value) error {
 	dst.Set(src)
 	return nil
 }
@@ -449,14 +515,14 @@ func (tm *typeMapper) match(src, dst reflect.Type) bool {
 	return tm.SrcType == src && tm.DstType == dst
 }
 
-func (tm *typeMapper) mapRefl(m *Mapper, src, dst reflect.Value) error {
+func (tm *typeMapper) mapRefl(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 	if tm == nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "unknown mapper")
 	}
 	if tm.MapFunc == nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
-	return tm.MapFunc(m, src, dst)
+	return tm.MapFunc(m, ctx, src, dst)
 }
 
 // InvalidSrcErr is returned when reflect.IsValid returns false for the source
@@ -471,6 +537,10 @@ var InvalidDstErr = errors.New("mapper: invalid destination value")
 type InvalidMappingErr struct {
 	From, To reflect.Type
 	Reason   string
+}
+
+func NewStrictMappingError(from, to reflect.Type) *InvalidMappingErr {
+	return &InvalidMappingErr{From: from, To: to, Reason: "strict mode"}
 }
 
 func NewInvalidMappingError(from, to reflect.Type, reason string) *InvalidMappingErr {
