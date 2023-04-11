@@ -48,6 +48,10 @@ type Context struct {
 	// DisableCache disables the cache of the type mappers.
 	DisableCache bool
 
+	// FieldMapper is a function that maps a struct field name to another name,
+	// it is used only when the tag is not present.
+	FieldMapper func(string) string
+
 	// Custom is a custom value that can be used to pass additional information
 	// to the mapping functions.
 	Custom any
@@ -85,6 +89,14 @@ func (c *Context) WithDisableCache(disableCache bool) *Context {
 	return &cpy
 }
 
+// WithFieldMapper returns a copy of the context with the FieldMapper field
+// set to the given value.
+func (c *Context) WithFieldMapper(fieldMapper func(string) string) *Context {
+	cpy := *c
+	cpy.FieldMapper = fieldMapper
+	return &cpy
+}
+
 // WithCustom returns a copy of the context with the Custom field set to the
 // given value.
 func (c *Context) WithCustom(custom any) *Context {
@@ -97,10 +109,6 @@ func (c *Context) WithCustom(custom any) *Context {
 type Mapper struct {
 	// Context is the default context used by the mapper.
 	Context *Context
-
-	// FieldMapper is a function that maps a struct field name to another name,
-	// it is used only when the tag is not present.
-	FieldMapper func(string) string
 
 	// Mappers is a map of custom mapper providers. The key is the type that
 	// the mapper can map to and from. The value is a function that returns
@@ -234,11 +242,11 @@ func (m *Mapper) Copy() *Mapper {
 			Tag:          m.Context.Tag,
 			ByteOrder:    m.Context.ByteOrder,
 			DisableCache: m.Context.DisableCache,
+			FieldMapper:  m.Context.FieldMapper,
 			Custom:       m.Context.Custom,
 		},
-		FieldMapper: m.FieldMapper,
-		Hooks:       m.Hooks,
-		cacheMap:    make(map[typePair]*typeMapper, 0),
+		Hooks:    m.Hooks,
+		cacheMap: make(map[typePair]*typeMapper, 0),
 	}
 	if m.Mappers != nil {
 		cpy.Mappers = make(map[reflect.Type]MapFuncProvider)
@@ -418,8 +426,8 @@ func (m *Mapper) initValue(v reflect.Value) {
 func (m *Mapper) parseTag(ctx *Context, f reflect.StructField) (fields string, skip bool) {
 	tag, ok := f.Tag.Lookup(ctx.Tag)
 	if !ok {
-		if m.FieldMapper != nil {
-			return m.FieldMapper(f.Name), false
+		if ctx.FieldMapper != nil {
+			return ctx.FieldMapper(f.Name), false
 		} else {
 			return f.Name, false
 		}
