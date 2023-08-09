@@ -95,7 +95,7 @@ func TestCustomMapFuncAny(t *testing.T) {
 
 func TestFieldMapper(t *testing.T) {
 	m := Default.Copy()
-	m.FieldMapper = func(name string) string {
+	m.Context.FieldMapper = func(name string) string {
 		return strings.ToLower(name)
 	}
 	type Src struct {
@@ -131,7 +131,7 @@ func TestEmptyTag(t *testing.T) {
 func TestCopy(t *testing.T) {
 	cpy := Default.Copy()
 	assert.Equal(t, Default.Context, cpy.Context)
-	assert.Equal(t, &Default.FieldMapper, &cpy.FieldMapper)
+	assert.Equal(t, &Default.Context.FieldMapper, &cpy.Context.FieldMapper)
 	assert.Equal(t, len(Default.Mappers), len(cpy.Mappers))
 	for k, v := range Default.Mappers {
 		rv1 := reflect.ValueOf(v)
