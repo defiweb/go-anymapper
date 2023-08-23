@@ -482,7 +482,7 @@ func TestTags(t *testing.T) {
 			Foo int    `map:"foo"`
 			Bar string `map:"bar"`
 			Baz int    `map:"-"`
-			qaz int
+			qaz int    //nolint:unused
 		}
 		var dst Dst
 		err := Map(map[string]any{
