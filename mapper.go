@@ -81,9 +81,9 @@ func (c *Context) WithByteOrder(byteOrder binary.ByteOrder) *Context {
 	return &cpy
 }
 
-// WithDisableCache returns a copy of the context with the DisableCache field
+// WithDisabledCache returns a copy of the context with the DisableCache field
 // set to the given value.
-func (c *Context) WithDisableCache(disableCache bool) *Context {
+func (c *Context) WithDisabledCache(disableCache bool) *Context {
 	cpy := *c
 	cpy.DisableCache = disableCache
 	return &cpy
