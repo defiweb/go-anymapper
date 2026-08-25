@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 )
 
@@ -105,7 +104,7 @@ func (c *Context) WithCustom(custom any) *Context {
 	return &cpy
 }
 
-// Mapper hold the mapper configuration.
+// Mapper holds the mapper configuration.
 type Mapper struct {
 	// Context is the default context used by the mapper.
 	Context *Context
@@ -378,6 +377,10 @@ func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 		}
 	}
 	if v.Kind() != reflect.Interface && v.Kind() != reflect.Pointer && v.CanSet() {
+		// The value can be a nil map or a nil slice, e.g. a field of a
+		// structure. It must be initialized, because the mapping functions
+		// write to it.
+		m.initValue(v)
 		return v
 	}
 	settable := reflect.Value{}
@@ -389,7 +392,7 @@ func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 		if v.CanSet() && isSimpleType(v.Type()) {
 			return v
 		}
-		if m.Mappers[v.Type()] != nil {
+		if v.CanSet() && m.Mappers[v.Type()] != nil {
 			return v
 		}
 		if v.Kind() == reflect.Map && !v.IsNil() {
@@ -406,18 +409,21 @@ func (m *Mapper) dstValue(v reflect.Value) reflect.Value {
 	return settable
 }
 
-// initValue initializes a value if it is a pointer, map or slice.
+// initValue initializes a value if it is a pointer, map, or slice.
 func (m *Mapper) initValue(v reflect.Value) {
-	if v.Kind() < reflect.Map || v.Kind() > reflect.Slice || !v.IsNil() || !v.CanSet() {
-		return
-	}
-	switch {
-	case v.Kind() == reflect.Pointer:
-		v.Set(reflect.New(v.Type().Elem()))
-	case v.Kind() == reflect.Map:
-		v.Set(reflect.MakeMap(v.Type()))
-	case v.Kind() == reflect.Slice:
-		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() && v.CanSet() {
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+	case reflect.Map:
+		if v.IsNil() && v.CanSet() {
+			v.Set(reflect.MakeMap(v.Type()))
+		}
+	case reflect.Slice:
+		if v.IsNil() && v.CanSet() {
+			v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+		}
 	}
 }
 
@@ -476,17 +482,17 @@ func isSimpleType(p reflect.Type) bool {
 	case reflect.String:
 		return p == stringTy
 	case reflect.Slice:
-		return strings.HasPrefix(p.String(), "[") && isSimpleType(p.Elem())
+		return p.PkgPath() == "" && isSimpleType(p.Elem())
 	case reflect.Array:
-		return strings.HasPrefix(p.String(), "[") && isSimpleType(p.Elem())
+		return p.PkgPath() == "" && isSimpleType(p.Elem())
 	case reflect.Map:
-		return strings.HasPrefix(p.String(), "map[") && isSimpleType(p.Elem()) && isSimpleType(p.Key())
+		return p.PkgPath() == "" && isSimpleType(p.Elem()) && isSimpleType(p.Key())
 	}
 	return false
 }
 
 // mapAny map src to dst assuming dst is an empty interface.
-func mapAny(m *Mapper, _ *Context, src, dst reflect.Value) error {
+func mapAny(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 	if !dst.IsNil() && !dst.Elem().CanSet() {
 		// Mapper always tries to reuse the destination value if possible, but
 		// if destination value is not settable, we need to cheat a little and
@@ -494,8 +500,8 @@ func mapAny(m *Mapper, _ *Context, src, dst reflect.Value) error {
 		// destination.
 		auxVal := reflect.New(dst.Elem().Type())
 		auxDst := m.dstValue(auxVal)
-		if err := m.MapRefl(src, auxDst); err != nil {
-			return NewInvalidMappingError(src.Type(), dst.Type(), "")
+		if err := m.MapReflContext(ctx, src, auxDst); err != nil {
+			return err
 		}
 		dst.Set(auxVal.Elem())
 		return nil

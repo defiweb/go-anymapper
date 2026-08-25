@@ -1,9 +1,44 @@
 # go-anymapper
 
-The `go-anymapper` package is a fast and convenient tool for mapping data between different types, including basic Go
-types like strings and integers, as well as more complex data structures. It allows you to create custom mapping rules
-to fit the unique requirements of your application. This means you can use `go-anymapper` to easily convert data in the
-most useful way for your specific needs.
+[![Run Tests](https://github.com/defiweb/go-anymapper/actions/workflows/test.yml/badge.svg)](https://github.com/defiweb/go-anymapper/actions/workflows/test.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/defiweb/go-anymapper.svg)](https://pkg.go.dev/github.com/defiweb/go-anymapper)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+`go-anymapper` maps data between any Go types at runtime. 
+
+```go
+type Order struct {
+	ID     int    `map:"id"`
+	Amount string `map:"amount"`
+}
+
+var order Order
+err := anymapper.Map(map[string]any{"id": "42", "amount": 1.5}, &order)
+// order = Order{ID: 42, Amount: "1.5"}
+```
+
+**Contents**
+
+<!-- TOC -->
+* [go-anymapper](#go-anymapper)
+  * [Installation](#installation)
+  * [Usage](#usage)
+  * [Mapping rules](#mapping-rules)
+  * [Additional types](#additional-types)
+  * [Destination values](#destination-values)
+  * [Structures](#structures)
+  * [Context](#context)
+  * [Strict types](#strict-types)
+  * [Examples](#examples)
+    * [Mapping between simple types](#mapping-between-simple-types)
+    * [Mapping between structure and map](#mapping-between-structure-and-map)
+    * [Mapping to interfaces](#mapping-to-interfaces)
+    * [MapFrom and MapTo interfaces](#mapfrom-and-mapto-interfaces)
+    * [Custom mapping function](#custom-mapping-function)
+  * [Benchmark](#benchmark)
+  * [Documentation](#documentation)
+  * [License](#license)
+<!-- TOC -->
 
 ## Installation
 
@@ -11,120 +46,143 @@ most useful way for your specific needs.
 go get -u github.com/defiweb/go-anymapper
 ```
 
+The package requires Go 1.18 or later.
+
 ## Usage
 
-The simplest way to use the `go-anymapper` package is to use the `Map` function. It takes two arguments: the source and
-the destination. The function will try to map the source to the destination using the following rules:
+The package provides four functions. The destination must be a pointer, or another value that the mapper can set.
 
-- If the dst value is an empty interface, the src value is assigned to it.
-- `bool` ⇔ `intX`, `uintX`, `floatX` ⇒ `true` ⇔ `1`, `false` ⇔ `0` (if source is number, then `≠0` ⇒ `true`).
-- `intX`, `uintX`, `floatX` ⇔ `intX`, `uintX`, `floatX` ⇒ cast numbers to the destination type.
-- `intX`, `uintX`, `floatX` ⇔ `[]byte` ⇒ converts using `binary.Read` and `binary.Write`.
-- `intX`, `uintX`, `floatX` ⇔ `[X]byte` ⇒ converts using `binary.Read` and `binary.Write`.
-- `string` ⇔ `intX`, `uintX` ⇒ converts using `big.Int.SetString` and `big.Int.String`.
-- `string` ⇔ `floatX` ⇒ converts string to or from number using `big.Float.SetString` and `big.Float.String`.
-- `string` ⇔ `[]byte` ⇒ converts using `[]byte(s)` and `string(b)`.
-- `slice` ⇔ `slice` ⇒ recursively map each slice element.
-- `slice` ⇔ `array` ⇒ recursively map each slice element if lengths are the same.
-- `array` ⇔ `array` ⇒ recursively map each array element if lengths are the same.
-- `map` ⇔ `map` ⇒ recursively map every key and value pair.
-- `struct` ⇔ `struct` ⇒ recursively map every struct field.
-- `struct` ⇔ `map[string]X` ⇒ map struct fields to map elements using field names as keys and vice versa.
+| Function                             | Description                                                       |
+|--------------------------------------|-------------------------------------------------------------------|
+| `Map(src, dst any) error`            | Maps the source value to the destination value.                   |
+| `MapContext(ctx, src, dst) error`    | Same as `Map`, but uses the given [context](#context).            |
+| `MapRefl(src, dst reflect.Value)`    | Same as `Map`, but takes `reflect.Value` arguments.               |
+| `MapReflContext(ctx, src, dst)`      | Same as `MapRefl`, but uses the given [context](#context).        |
 
-The above types refer to the type kind, not the actual type, hence `type MyInt int` is also considered as `int`.
+These functions use the [default mapper instance](#default-mapper-instance). The same functions are available as methods
+of the `Mapper` type.
 
-In addition to the above rules, the default configuration of the mapper supports the following conversions:
+## Mapping rules
 
-- `time.Time` ⇔ `string` ⇒ converts string to or from time using RFC3339 format.
-- `time.Time` ⇔  `uint`, `uint32`, `uint64`, `int`, `int32`, `int64` ⇒ convert using Unix timestamp.
-- `time.Time` ⇔  `uint8`, `uint16`, `int8`, `int16` ⇒ not allowed.
-- `time.Time` ⇔  `floatX` ⇒ convert to or from unix timestamp, preserving the fractional part of a second.
-- `time.Time` ⇔  `big.Int` ⇒ convert using Unix timestamp.
-- `time.Time` ⇔  `big.Float` ⇒ convert using Unix timestamp, preserving the fractional part of a second.
-- `time.Time` ⇔  _other_ ⇒ try to convert using `int64` as intermediate value.
-- `big.Int` ⇔ `intX`, `uintX`, `floatX` ⇒ convert using `big.Int.Int64` and `big.Int.SetUint64`.
-- `big.Int` ⇔ `string` ⇒ converts using `big.Int.String` and `big.Int.SetString`.
-- `big.Int` ⇔ `[]byte` ⇒ converts using `big.Int.Bytes` and `big.Int.SetBytes`.
-- `big.Int` ⇔ `big.Float` ⇒ coverts using `big.Float.Int` and `big.Float.SetInt`.
-- `big.Float` ⇔ `intX`, `uintX` ⇒ convert using `big.Float.Int64` and `big.Float.SetUint64`.
-- `big.Float` ⇔ `floatX` ⇒ convert using `big.Float.Float64` and `big.Float.SetFloat64`.
-- `big.Float` ⇔ `string` ⇒ converts to or from string using `big.Float.String` and `big.Float.SetString`.
-- `big.Rat` ⇔ `string` ⇒ converts to or from string using `big.Rat.String` and `big.Rat.SetString`.
-- `big.Rat` ⇔ `big.Float` ⇒ converts using `big.Float.SetRat` and `big.Float.Rat`.
-- `big.Rat` ⇔ `slice`, `[2]array` ⇒ convert first element to/from numerator and second to/form denominator.
-- `big.Rat` ⇔ _other_ ⇒ try to convert using `big.Float` as intermediate value.
+The mapper uses the rules below. The types in the table refer to the type kind, not to the actual type, hence
+`type MyInt int` is also considered as `int`.
 
-Mapping will fail if the target type is not large enough to hold the source value. For example, mapping `int64`
-to `int8` may fail because `int64` can store values larger than `int8`.
+| Types                                                 | Conversion                                                                                         |
+|-------------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| _any type_ ⇒ `any` (empty interface)                  | Assigns the source value to the interface. See [destination values](#destination-values).          |
+| `bool` ⇔ `intX`, `uintX`, `floatX`                    | `false` ⇔ `0` and `true` ⇔ `1`. Every number other than `0` becomes `true`.                        |
+| `bool` ⇔ `string`                                     | `false` ⇔ `"false"` and `true` ⇔ `"true"`. Every other string is an error.                         |
+| `intX`, `uintX`, `floatX` ⇔ `intX`, `uintX`, `floatX` | Casts the number to the destination type.                                                          |
+| `intX`, `uintX`, `floatX` ⇔ `[]byte`, `[X]byte`       | Converts with `binary.Read` and `binary.Write`.                                                    |
+| `string` ⇔ `intX`, `uintX`                            | Converts with `strconv.ParseInt`/`strconv.ParseUint` and `strconv.FormatInt`/`strconv.FormatUint`. |
+| `string` ⇔ `floatX`                                   | Converts with `strconv.ParseFloat` and `strconv.FormatFloat`.                                      |
+| `string` ⇔ `[]byte`, `[X]byte`                        | Converts with `[]byte(s)` and `string(b)`.                                                         |
+| `slice` ⇔ `slice`                                     | Maps every element.                                                                                |
+| `slice` ⇔ `array`                                     | Maps every element, if the lengths are the same.                                                   |
+| `array` ⇔ `array`                                     | Maps every element, if the lengths are the same.                                                   |
+| `map` ⇔ `map`                                         | Maps every key and every value.                                                                    |
+| `struct` ⇔ `struct`                                   | Maps every exported field. See [structures](#structures).                                          |
+| `struct` ⇔ `map[string]X`                             | Uses the field names as map keys. See [structures](#structures).                                   |
 
-When mapping numbers from a byte slice or array, the length of the slice/array *must* be the same as the size of the
-variable in bytes. The size of `int`, `uint` is always considered as 64 bits.
+The mapping fails if the destination type is not large enough to hold the source value. For example, mapping `int64` to
+`int8` may fail, because `int64` can store values larger than `int8`.
 
-The mapper will not overwrite the values in the destination if they do not have corresponding values in the source. For
-slices, if the destination slice is longer than the source slice, the extra elements will remain unchanged.
+Numbers and byte slices use the byte order from `Context.ByteOrder`, which is big-endian by default. When the mapper
+converts a byte slice or a byte array to a number, the length of the slice or array *must* be the same as the size of
+the number in bytes. The size of `int` and `uint` is always considered as 64 bits, so the same data can be mapped on
+32-bit and 64-bit architectures.
 
-When using the mapper to convert values to interface types, it will attempt to use existing elements in the destination
-if possible. For example, mapping `[]int{1, 2}` to `[]any{"", 0}` will result in `[]any{"1", 2}`, allowing to easily
-assign values to a specific implementation of an interface.
+## Additional types
 
-### Mapping structures
+The default configuration adds the rules below for `time.Time` and for the `math/big` types.
 
-Structures are treated by mapper as key-value maps. The mapper will try to map recursively every field of the source
-structure to the corresponding field of the destination structure or map.
+| Types                                                             | Conversion                                                                                                       |
+|-------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| `time.Time` ⇔ `string`                                            | Converts with the RFC3339 format.                                                                                |
+| `time.Time` ⇔ `int`, `int32`, `int64`, `uint`, `uint32`, `uint64` | Converts with the Unix timestamp.                                                                                |
+| `time.Time` ⇔ `floatX`                                            | Converts with the Unix timestamp, and keeps the fractional part of a second.                                     |
+| `time.Time` ⇔ `big.Int`                                           | Converts with the Unix timestamp.                                                                                |
+| `time.Time` ⇔ `big.Float`                                         | Converts with the Unix timestamp, and keeps the fractional part of a second.                                     |
+| `time.Time` ⇔ `int8`, `int16`, `uint8`, `uint16`                  | Not allowed.                                                                                                     |
+| `time.Time` ⇔ _other_                                             | Uses `int64` as an intermediate value.                                                                           |
+| `big.Int` ⇔ `bool`, `intX`, `uintX`, `floatX`                     | Converts with the `big.Int` methods, e.g. `big.Int.Int64` and `big.NewInt`.                                      |
+| `big.Int` ⇔ `string`                                              | Converts with `big.Int.String` and `big.Int.SetString`. The base of the string comes from its prefix, e.g. `0x`. |
+| `big.Int` ⇔ `[]byte`                                              | Converts with `big.Int.Bytes` and `big.Int.SetBytes`. A negative value is an error.                              |
+| `big.Int` ⇔ `big.Float`                                           | Converts with `big.Float.Int` and `big.Float.SetInt`.                                                            |
+| `big.Float` ⇔ `bool`, `intX`, `uintX`, `floatX`                   | Converts with the `big.Float` methods, e.g. `big.Float.Float64` and `big.Float.SetFloat64`.                      |
+| `big.Float` ⇔ `string`                                            | Converts with `big.Float.String` and `big.Float.SetString`.                                                      |
+| `big.Rat` ⇔ `string`                                              | Converts with `big.Rat.String` and `big.Rat.SetString`.                                                          |
+| `big.Rat` ⇔ `slice`, `[2]array`                                   | Maps the first element to the numerator and the second to the denominator.                                       |
+| `big.Rat` ⇔ `big.Float`                                           | Converts with `big.Float.SetRat` and `big.Float.Rat`.                                                            |
+| `big.Rat` ⇔ _other_                                               | Uses `big.Float` as an intermediate value.                                                                       |
 
-Field names can be overridden with a tag (whose name is defined in `Mapper.Tag`, default is `map`).
+## Destination values
 
-As a special case, if the field tag is "-", the field is always omitted.
+The mapper always tries to reuse the destination value. It does not change the fields, keys, or elements of the
+destination that have no equivalent in the source.
 
-If the tag is not set, struct field names will be mapped using the `Mapper.FieldNameMapper` function.
+Slices always get the length of the source slice. The mapper reuses the elements that exist in both slices, and sets 
+the new elements to their zero value. An array cannot be resized, hence the source and the destination must have the 
+same length.
 
-Tags can be defined for both source and target structures. In this case, the names used in the tags must be the same for
-both structures.
+Interfaces keep the type of the value that they hold. If the destination is an interface that is not empty, the
+mapper maps the source to the type of the value in that interface. This is an easy way to select the type of the result:
 
-If destination structure has fields that are not present in the source structure, the mapper will set zero values for
-those fields.
+```go
+dst := []any{"", 0, new(big.Int)}
+err := anymapper.Map([]string{"1", "2", "3"}, &dst)
+// dst = []any{"1", 2, big.NewInt(3)}
+```
 
-### Strict types
+The source can be a slice of interfaces too. Elements that the mapper adds to the destination slice have no type, so it
+assigns them directly from the source.
 
-If `Context.StrictTypes` is set to true, strict type checking will be enforced for the mapping process. This means that the
-source and destination types must be exactly the same for the mapping to be successful. However, mapping between
-different data structures, such as `struct` ⇔ `struct`, `struct` ⇔ `map` and `map` ⇔ `map` is always allowed. If the
-destination type is an empty interface, the source value will be assigned to it regardless of the strict type check
-setting.
+If the destination is a nil pointer, a nil map, or a nil slice, the mapper creates the value before it maps the data.
 
-Additionally, the strict type check applies to custom types as well. For example, a custom type `type MyInt int` will
-not be treated as `int` anymore.
+## Structures
 
-### Custom mapping functions
+The mapper treats a structure as a key-value map. It maps every exported field of the source structure to the field of
+the destination structure, or to the element of the destination map, that has the same name.
 
-If it is not possible to implement the above interfaces, custom mapping functions can be registered with the
-`Mapper.Mapper` map. The keys of this map are the types of the destination or source values, and the values are
-functions that return a `MapFunc` function that can map the source value to the destination value.
+A tag changes the name of a field. The name of the tag is defined in `Context.Tag`, and is `map` by default:
 
-If the function returns a `nil` value, it means that the mapping is not possible. If both the source and destination
-types are registered, the source type will be used first. If it returns a nil value, the destination type will be used.
-If neither of them returns a `nil` value, the mapping will fail.
+```go
+type Data struct {
+	Foo int `map:"bar"`
+	Bar int `map:"foo"`
+}
+```
 
-### `MapTo` and `MapFrom` interfaces:
+- If the tag is `-`, the mapper always omits the field.
+- If the field has no tag, the mapper uses the `Context.FieldMapper` function to change the field name. If that function
+  is `nil`, it uses the field name.
+- Tags can be set in the source structure, in the destination structure, or in both. If both structures have tags, the
+  names in the tags must be the same.
+- Fields of the destination structure that have no equivalent in the source structure stay unchanged.
 
-**This feature is disabled by default. To enable it, set `Mapper.Hooks` to `Mapper.MappingInterfaceHooks`.**
+## Context
 
-The `go-anymapper` package provides two interfaces that can be implemented by the source and destination types to
-customize the mapping process.
+A `Context` holds the settings of one mapping operation. Use it to change the behavior of the mapper without a change of
+the global state.
 
-If the source value implements `MapTo` interface, the `MapTo` method will be used to map the source value to the
-destination value.
+| Field          | Default            | Description                                                          |
+|----------------|--------------------|----------------------------------------------------------------------|
+| `Tag`          | `map`              | Name of the structure tag.                                           |
+| `ByteOrder`    | `binary.BigEndian` | Byte order for the conversions between numbers and bytes.            |
+| `StrictTypes`  | `false`            | Enables [strict types](#strict-types).                               |
+| `DisableCache` | `false`            | Disables the cache of the mapping functions.                         |
+| `FieldMapper`  | `nil`              | Function that changes the name of a structure field that has no tag. |
+| `Custom`       | `nil`              | Any value that custom mapping functions can use.                     |
 
-If the destination value implements `MapFrom` interface, the `MapFrom` method will be used to map the source value to
-the destination value.
+## Strict types
 
-If both source and destination values implement the `MapTo` and `MapFrom` interfaces then only `MapTo` will be used.
+If `Context.StrictTypes` is `true`, the source and the destination must have exactly the same type. The check also
+applies to custom types, hence `type MyInt int` is no longer treated as `int`.
 
-### Default mapper instance
+There are two exceptions:
 
-The package defines the default mapper instance `Default` that is used by `Map` and `MapRefl` functions. It is
-possible to change configuration of the default mapper, but it may affect other packages that use the default mapper. To
-avoid this, it is recommended to create a new instance of the mapper using the `New` method.
+- Mapping between structs and maps is always allowed.
+- If the destination is an empty interface, the mapper always assigns the source value to it.
 
 ## Examples
 
@@ -140,7 +198,7 @@ import (
 )
 
 func main() {
-	var a int = 42
+	a := 42
 	var b string
 
 	err := anymapper.Map(a, &b)
@@ -181,6 +239,31 @@ func main() {
 }
 ```
 
+### Mapping to interfaces
+
+```go
+package main
+
+import (
+	"fmt"
+	"math/big"
+
+	"github.com/defiweb/go-anymapper"
+)
+
+func main() {
+	// The values in the destination slice define the target types.
+	b := []any{new(big.Int), 0, 0.0}
+
+	err := anymapper.Map([]string{"1", "2", "3"}, &b)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%T %T %T\n", b[0], b[1], b[2]) // *big.Int int float64
+}
+```
+
 ### MapFrom and MapTo interfaces
 
 ```go
@@ -189,6 +272,7 @@ package main
 import (
 	"fmt"
 	"math/big"
+	"reflect"
 
 	"github.com/defiweb/go-anymapper"
 )
@@ -209,9 +293,9 @@ func (v *Val) MapTo(m *anymapper.Mapper, x reflect.Value) error {
 }
 
 func main() {
-	var a int = 42
+	a := 42
 	var b Val
-	
+
 	// Enable MapTo and MapFrom interfaces:
 	anymapper.Default.Hooks = anymapper.MappingInterfaceHooks
 
@@ -231,8 +315,8 @@ package main
 
 import (
 	"fmt"
-	"reflect"
 	"math/big"
+	"reflect"
 
 	"github.com/defiweb/go-anymapper"
 )
@@ -242,7 +326,7 @@ type Val struct {
 }
 
 func main() {
-	var a int = 42
+	a := 42
 	var b Val
 
 	typ := reflect.TypeOf(Val{})
@@ -269,9 +353,9 @@ func main() {
 }
 ```
 
-### Benchmark
+## Benchmark
 
-Following benchmarks compare the performance of the `go-anymapper` package with the `mapstructure` package.
+The benchmark below compares `go-anymapper` with the `mapstructure` package.
 
 ```go
 package main
@@ -361,12 +445,16 @@ func Benchmark(b *testing.B) {
 Results:
 
 ```
-BenchmarK/anymapper/map-struct         	  972992	      1174 ns/op
+Benchmark/anymapper/map-struct         	  972992	      1174 ns/op
 Benchmark/anymapper/struct-map         	  903348	      1311 ns/op
-BenchmarK/mapstructure/map-struct      	  339668	      3501 ns/op
+Benchmark/mapstructure/map-struct      	  339668	      3501 ns/op
 Benchmark/mapstructure/struct-map      	 1354458	      889.5 ns/op
 ```
 
 ## Documentation
 
 [https://pkg.go.dev/github.com/defiweb/go-anymapper](https://pkg.go.dev/github.com/defiweb/go-anymapper)
+
+## License
+
+[MIT](LICENSE)

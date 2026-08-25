@@ -4,8 +4,10 @@ import (
 	"math"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuiltInTypes(t *testing.T) {
@@ -248,6 +250,11 @@ func TestBuiltInTypes(t *testing.T) {
 		{name: `[]string->[]int#invalid`, src: []string{"foo"}, dst: new([]int), err: true}, // error
 		{name: `[]int{1}->[]int{0,1}`, src: []int{1}, dst: ptr([]int{0, 1}), exp: []int{1}},
 		{name: `[]int{1}->[]any{}`, src: []int{1}, dst: ptr(anySlice()), exp: []any{1}},
+		{name: `[]int{1}->[]string{"a","b","c"}`, src: []int{1}, dst: ptr([]string{"a", "b", "c"}), exp: []string{"1"}},
+		{name: `[]string{"1"}->[]any{0,"a"}`, src: []string{"1"}, dst: ptr([]any{0, "a"}), exp: []any{1}},
+		{name: `[]any{"1","2"}->[]any{0,0.0}`, src: []any{"1", "2"}, dst: ptr([]any{0, 0.0}), exp: []any{1, 2.0}},
+		{name: `[]any{nil}->[]string{"a"}`, src: []any{nil}, dst: ptr([]string{"a"}), exp: []string{""}},
+		{name: `[]any{nil}->[]any{0}`, src: []any{nil}, dst: ptr([]any{0}), exp: []any{nil}},
 		{name: `[]string{"foo"}->mySlice`, src: []string{"foo"}, dst: new(mySlice), exp: mySlice{"foo"}},
 		{name: `mySlice{"foo"}->[]string`, src: mySlice{"foo"}, dst: new([]string), exp: []string{"foo"}},
 
@@ -256,6 +263,7 @@ func TestBuiltInTypes(t *testing.T) {
 		{name: `[3]int{1,2,3}->make([]uint8,0,3)`, src: [3]int{1, 2, 3}, dst: ptr(make([]uint8, 0, 3)), exp: []uint8{1, 2, 3}},
 		{name: `[3]byte("foo")->[]byte`, src: [3]byte{'f', 'o', 'o'}, dst: new([]byte), exp: []byte("foo")},
 		{name: `[]string->[1]int`, src: []string{"1"}, dst: new([1]int), exp: [1]int{1}},
+		{name: `[]string{"1"}->[2]any{0,"a"}`, src: []string{"1", "2"}, dst: ptr([2]any{0, "a"}), exp: [2]any{1, "2"}},
 		{name: `[]string->[1]int#invalid`, src: []string{"foo"}, dst: new([1]int), err: true},              // error
 		{name: `[1]string->[]int#invalid`, src: [1]string{"foo"}, dst: new([]int), err: true},              // error
 		{name: `[]byte("foo")->[2]byte#array-too-short`, src: []byte("foo"), dst: new([2]byte), err: true}, // error
@@ -290,6 +298,8 @@ func TestBuiltInTypes(t *testing.T) {
 		// map <-> struct
 		{name: `map[string]string{"Foo":"bar"}->struct{Foo string}`, src: map[string]string{"Foo": "bar"}, dst: new(struct{ Foo string }), exp: struct{ Foo string }{"bar"}},
 		{name: `struct{Foo string}{Foo:"bar"}->map[string]string`, src: struct{ Foo string }{"bar"}, dst: new(map[string]string), exp: map[string]string{"Foo": "bar"}},
+		{name: `map[string]any{map}->struct{nil map}`, src: map[string]any{"Foo": map[string]string{"a": "1"}}, dst: new(struct{ Foo map[string]int }), exp: struct{ Foo map[string]int }{Foo: map[string]int{"a": 1}}},
+		{name: `struct{map}->struct{nil map}`, src: struct{ Foo map[string]string }{map[string]string{"a": "1"}}, dst: new(struct{ Foo map[string]int }), exp: struct{ Foo map[string]int }{Foo: map[string]int{"a": 1}}},
 
 		// struct <-> struct
 		{name: `struct{A int}{1}->struct{A int}`, src: struct{ A int }{1}, dst: new(struct{ A int }), exp: struct{ A int }{1}},
@@ -342,6 +352,73 @@ func TestBuiltInTypes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSliceLength(t *testing.T) {
+	type row struct{ A, B int }
+
+	t.Run("shorter source truncates the destination", func(t *testing.T) {
+		d := []string{"a", "b", "c"}
+		require.NoError(t, Map([]int{1}, &d))
+		assert.Equal(t, []string{"1"}, d)
+	})
+
+	t.Run("truncation releases the removed elements", func(t *testing.T) {
+		d := []*int{new(int), new(int), new(int)}
+		full := d[:3:3]
+		require.NoError(t, Map([]int{1}, &d))
+		assert.Nil(t, full[1])
+		assert.Nil(t, full[2])
+	})
+
+	t.Run("longer source extends the destination", func(t *testing.T) {
+		d := []string{"a"}
+		require.NoError(t, Map([]int{1, 2, 3}, &d))
+		assert.Equal(t, []string{"1", "2", "3"}, d)
+	})
+
+	t.Run("extension does not reuse stale elements", func(t *testing.T) {
+		d := make([]row, 3)
+		d[1] = row{7, 7}
+		d[2] = row{8, 8}
+		d = d[:1]
+		require.NoError(t, Map([]struct{ A int }{{1}, {2}, {3}}, &d))
+		assert.Equal(t, []row{{A: 1}, {A: 2}, {A: 3}}, d)
+	})
+
+	t.Run("same type does not share the source array", func(t *testing.T) {
+		s := []row{{A: 1}, {A: 2}}
+		d := []row{{A: 9}}
+		require.NoError(t, Map(s, &d))
+		d[0].A = 42
+		assert.Equal(t, []row{{A: 1}, {A: 2}}, s)
+	})
+}
+
+func TestSliceTypeReuse(t *testing.T) {
+	t.Run("destination types are used to map the elements", func(t *testing.T) {
+		d := []any{new(big.Int), 0, 0.0}
+		require.NoError(t, Map([]string{"1", "2", "3"}, &d))
+		assert.Equal(t, []any{big.NewInt(1), 2, 3.0}, d)
+	})
+
+	t.Run("destination types are used for any to any mapping", func(t *testing.T) {
+		d := []any{new(big.Int), 0, 0.0}
+		require.NoError(t, Map([]any{"1", "2", "3"}, &d))
+		assert.Equal(t, []any{big.NewInt(1), 2, 3.0}, d)
+	})
+
+	t.Run("destination types are used for arrays", func(t *testing.T) {
+		d := [2]any{new(big.Int), time.Time{}}
+		require.NoError(t, Map([2]string{"1", "1970-01-01T00:00:05Z"}, &d))
+		assert.Equal(t, [2]any{big.NewInt(1), time.Unix(5, 0).UTC()}, d)
+	})
+
+	t.Run("new elements have no type", func(t *testing.T) {
+		d := []any{0.0}
+		require.NoError(t, Map([]string{"1", "2"}, &d))
+		assert.Equal(t, []any{1.0, "2"}, d)
+	})
 }
 
 func TestStrictTypes(t *testing.T) {

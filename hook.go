@@ -34,7 +34,7 @@ var MappingInterfaceHooks = Hooks{
 		return nil
 	},
 	SourceValueHook: func(v reflect.Value) reflect.Value {
-		for v.Kind() == reflect.Interface || v.Kind() == reflect.Ptr {
+		for v.Kind() == reflect.Interface || v.Kind() == reflect.Pointer {
 			if _, ok := v.Interface().(MapTo); ok {
 				return v
 			}
@@ -43,7 +43,7 @@ var MappingInterfaceHooks = Hooks{
 		return reflect.Value{}
 	},
 	DestinationValueHook: func(v reflect.Value) reflect.Value {
-		for v.Kind() == reflect.Interface || v.Kind() == reflect.Ptr {
+		for v.Kind() == reflect.Interface || v.Kind() == reflect.Pointer {
 			if v.Kind() == reflect.Ptr && v.IsNil() {
 				if !v.CanSet() {
 					return reflect.Value{}
@@ -62,13 +62,21 @@ var MappingInterfaceHooks = Hooks{
 // mapFromInterface is the MapFunc that is used to map a value using the
 // MapFrom interface.
 func mapFromInterface(m *Mapper, _ *Context, src, dst reflect.Value) error {
-	return dst.Interface().(MapFrom).MapFrom(m, src)
+	mapFrom, ok := dst.Interface().(MapFrom)
+	if !ok {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "MapFrom not implemented")
+	}
+	return mapFrom.MapFrom(m, src)
 }
 
 // mapToInterface is the MapFunc that is used to map a value using the
 // MapTo interface.
 func mapToInterface(m *Mapper, _ *Context, src, dst reflect.Value) error {
-	return src.Interface().(MapTo).MapTo(m, dst)
+	mapTo, ok := src.Interface().(MapTo)
+	if !ok {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "MapTo not implemented")
+	}
+	return mapTo.MapTo(m, dst)
 }
 
 // implMapTo returns true if the type implements the MapTo interface.

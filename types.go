@@ -453,9 +453,6 @@ func mapStringToBigInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
 	if ctx.StrictTypes {
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
-	if ctx.StrictTypes {
-		return NewStrictMappingError(src.Type(), dst.Type())
-	}
 	v, ok := new(big.Int).SetString(src.String(), 0)
 	if !ok {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "invalid string")
