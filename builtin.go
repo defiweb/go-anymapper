@@ -135,7 +135,9 @@ func builtInTypesMapper(_ *Mapper, src, dst reflect.Type) MapFunc {
 		case reflect.Map:
 			return mapMapToMap
 		case reflect.Struct:
-			return mapMapToStruct
+			if src.Key().Kind() == reflect.String {
+				return mapMapToStruct
+			}
 		}
 	case reflect.Struct:
 		switch dst.Kind() {
@@ -646,6 +648,7 @@ func mapListToArray(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 
 func mapMapToStruct(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 	mapper := &typeMapper{}
+	srcKeyTyp := src.Type().Key()
 	dstNum := dst.Type().NumField()
 	for i := 0; i < dstNum; i++ {
 		dstFld := dst.Type().Field(i)
@@ -658,6 +661,9 @@ func mapMapToStruct(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 			continue
 		}
 		srcKey := reflect.ValueOf(tag)
+		if srcKeyTyp != stringTy {
+			srcKey = srcKey.Convert(srcKeyTyp)
+		}
 		srcVal := src.MapIndex(srcKey)
 		if !srcVal.IsValid() {
 			// If the source map doesn't have a value for the key, skip it.
@@ -842,6 +848,7 @@ func mapStructToMap(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 	var (
 		mapper     = &typeMapper{}
 		srcNum     = src.Type().NumField()
+		dstKeyTyp  = dst.Type().Key()
 		dstElemTyp = dst.Type().Elem()
 	)
 	for i := 0; i < srcNum; i++ {
@@ -855,6 +862,10 @@ func mapStructToMap(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 			continue
 		}
 		dstKey := reflect.ValueOf(tag)
+		if dstKeyTyp != stringTy {
+			// The key type of the map can be a named string type.
+			dstKey = dstKey.Convert(dstKeyTyp)
+		}
 		srcVal := m.srcValue(src.Field(i))
 		if !srcVal.IsValid() {
 			// A nil source.

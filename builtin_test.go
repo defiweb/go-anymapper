@@ -20,6 +20,7 @@ func TestBuiltInTypes(t *testing.T) {
 		mySlice  []string
 		myArray  [1]string
 		myMap    map[string]string
+		myKeyMap map[myString]string
 	)
 
 	tests := []struct {
@@ -298,6 +299,10 @@ func TestBuiltInTypes(t *testing.T) {
 		// map <-> struct
 		{name: `map[string]string{"Foo":"bar"}->struct{Foo string}`, src: map[string]string{"Foo": "bar"}, dst: new(struct{ Foo string }), exp: struct{ Foo string }{"bar"}},
 		{name: `struct{Foo string}{Foo:"bar"}->map[string]string`, src: struct{ Foo string }{"bar"}, dst: new(map[string]string), exp: map[string]string{"Foo": "bar"}},
+		{name: `map[myString]string{"Foo":"bar"}->struct{Foo string}`, src: myKeyMap{"Foo": "bar"}, dst: new(struct{ Foo string }), exp: struct{ Foo string }{"bar"}},
+		{name: `struct{Foo string}{Foo:"bar"}->map[myString]string`, src: struct{ Foo string }{"bar"}, dst: new(myKeyMap), exp: myKeyMap{"Foo": "bar"}},
+		{name: `map[int]string->struct#invalid-key`, src: map[int]string{1: "bar"}, dst: new(struct{ Foo string }), err: true},          // error
+		{name: `struct{Foo string}->map[int]string#invalid-key`, src: struct{ Foo string }{"bar"}, dst: new(map[int]string), err: true}, // error
 		{name: `map[string]any{map}->struct{nil map}`, src: map[string]any{"Foo": map[string]string{"a": "1"}}, dst: new(struct{ Foo map[string]int }), exp: struct{ Foo map[string]int }{Foo: map[string]int{"a": 1}}},
 		{name: `struct{map}->struct{nil map}`, src: struct{ Foo map[string]string }{map[string]string{"a": "1"}}, dst: new(struct{ Foo map[string]int }), exp: struct{ Foo map[string]int }{Foo: map[string]int{"a": 1}}},
 
