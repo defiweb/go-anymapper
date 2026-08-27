@@ -519,6 +519,11 @@ func mapListToSlice(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 	if ctx.StrictTypes && src.Type() != dst.Type() {
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
+	if src.Kind() == reflect.Slice && src.IsNil() && dst.CanSet() {
+		// A nil source.
+		dst.Set(reflect.Zero(dst.Type()))
+		return nil
+	}
 	var (
 		srcTyp = src.Type().Elem()
 		dstTyp = dst.Type().Elem()
@@ -653,9 +658,15 @@ func mapMapToStruct(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 			continue
 		}
 		srcKey := reflect.ValueOf(tag)
-		srcVal := m.srcValue(src.MapIndex(srcKey))
+		srcVal := src.MapIndex(srcKey)
 		if !srcVal.IsValid() {
 			// If the source map doesn't have a value for the key, skip it.
+			continue
+		}
+		if srcVal = m.srcValue(srcVal); !srcVal.IsValid() {
+			// A nil source.
+			dstFld := dst.Field(i)
+			dstFld.Set(reflect.Zero(dstFld.Type()))
 			continue
 		}
 		dstVal := m.dstValue(dst.Field(i))
@@ -672,6 +683,11 @@ func mapMapToStruct(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 }
 
 func mapMapToMap(m *Mapper, ctx *Context, src, dst reflect.Value) error {
+	if src.IsNil() && dst.CanSet() {
+		// A nil source.
+		dst.Set(reflect.Zero(dst.Type()))
+		return nil
+	}
 	var (
 		srcKeyTyp  = src.Type().Key()
 		dstKeyTyp  = dst.Type().Key()
@@ -690,6 +706,11 @@ func mapMapToMap(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 			}
 		}
 		srcVal := m.srcValue(src.MapIndex(srcKey))
+		if !srcVal.IsValid() {
+			// A nil source.
+			dst.SetMapIndex(dstKey, reflect.Zero(dstElemTyp))
+			continue
+		}
 		dstVal := m.dstValue(dst.MapIndex(dstKey))
 		if dstVal.IsValid() {
 			// If the destination map already has a value for the key.
@@ -738,6 +759,13 @@ func mapStructsOfSameType(m *Mapper, ctx *Context, src, dst reflect.Value) error
 			continue
 		}
 		srcVal := m.srcValue(src.Field(i))
+		if !srcVal.IsValid() {
+			// If the source field is a nil pointer or a nil interface, set
+			// the destination field to its zero value.
+			dstFld := dst.Field(i)
+			dstFld.Set(reflect.Zero(dstFld.Type()))
+			continue
+		}
 		dstVal := m.dstValue(dst.Field(i))
 		srcValTyp := srcVal.Type()
 		dstValTyp := dstVal.Type()
@@ -791,6 +819,12 @@ func mapStructsOfDifferentTypes(m *Mapper, ctx *Context, src, dst reflect.Value)
 			// If the source struct doesn't have a value for the key, skip it.
 			continue
 		}
+		if !srcVal.IsValid() {
+			// A nil source.
+			dstFld := dst.Field(i)
+			dstFld.Set(reflect.Zero(dstFld.Type()))
+			continue
+		}
 		dstVal := m.dstValue(dst.Field(i))
 		srcValTyp := srcVal.Type()
 		dstValTyp := dstVal.Type()
@@ -822,6 +856,11 @@ func mapStructToMap(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 		}
 		dstKey := reflect.ValueOf(tag)
 		srcVal := m.srcValue(src.Field(i))
+		if !srcVal.IsValid() {
+			// A nil source.
+			dst.SetMapIndex(dstKey, reflect.Zero(dstElemTyp))
+			continue
+		}
 		dstVal := m.dstValue(dst.MapIndex(dstKey))
 		if dstVal.IsValid() {
 			// If the destination map already has a value for the key.

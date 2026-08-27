@@ -357,33 +357,40 @@ func TestBuiltInTypes(t *testing.T) {
 func TestSliceLength(t *testing.T) {
 	type row struct{ A, B int }
 
-	t.Run("shorter source truncates the destination", func(t *testing.T) {
-		d := []string{"a", "b", "c"}
-		require.NoError(t, Map([]int{1}, &d))
-		assert.Equal(t, []string{"1"}, d)
-	})
+	// staleSlice returns a slice with a length of 1 and a capacity of 3. The
+	// free capacity holds the values of an earlier use of the slice.
+	staleSlice := func() []row {
+		s := make([]row, 3)
+		s[1] = row{A: 7, B: 7}
+		s[2] = row{A: 8, B: 8}
+		return s[:1]
+	}
 
+	tests := []struct {
+		name string
+		src  any
+		dst  any
+		exp  any
+	}{
+		{name: `[]int{1}->[]string{"a","b","c"}#truncate`, src: []int{1}, dst: ptr([]string{"a", "b", "c"}), exp: []string{"1"}},
+		{name: `[]int{1,2,3}->[]string{"a"}#extend`, src: []int{1, 2, 3}, dst: ptr([]string{"a"}), exp: []string{"1", "2", "3"}},
+		{name: `[]struct{A}->[]row#stale-capacity`, src: []struct{ A int }{{1}, {2}, {3}}, dst: ptr(staleSlice()), exp: []row{{A: 1}, {A: 2}, {A: 3}}},
+		{name: `[1]int{1}->[]string{"a","b","c"}#truncate`, src: [1]int{1}, dst: ptr([]string{"a", "b", "c"}), exp: []string{"1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, Map(tt.src, tt.dst))
+			assert.Equal(t, exp(tt.exp), dst(tt.dst))
+		})
+	}
+
+	// Additional edge cases:
 	t.Run("truncation releases the removed elements", func(t *testing.T) {
 		d := []*int{new(int), new(int), new(int)}
 		full := d[:3:3]
 		require.NoError(t, Map([]int{1}, &d))
 		assert.Nil(t, full[1])
 		assert.Nil(t, full[2])
-	})
-
-	t.Run("longer source extends the destination", func(t *testing.T) {
-		d := []string{"a"}
-		require.NoError(t, Map([]int{1, 2, 3}, &d))
-		assert.Equal(t, []string{"1", "2", "3"}, d)
-	})
-
-	t.Run("extension does not reuse stale elements", func(t *testing.T) {
-		d := make([]row, 3)
-		d[1] = row{7, 7}
-		d[2] = row{8, 8}
-		d = d[:1]
-		require.NoError(t, Map([]struct{ A int }{{1}, {2}, {3}}, &d))
-		assert.Equal(t, []row{{A: 1}, {A: 2}, {A: 3}}, d)
 	})
 
 	t.Run("same type does not share the source array", func(t *testing.T) {
@@ -396,29 +403,111 @@ func TestSliceLength(t *testing.T) {
 }
 
 func TestSliceTypeReuse(t *testing.T) {
-	t.Run("destination types are used to map the elements", func(t *testing.T) {
-		d := []any{new(big.Int), 0, 0.0}
-		require.NoError(t, Map([]string{"1", "2", "3"}, &d))
-		assert.Equal(t, []any{big.NewInt(1), 2, 3.0}, d)
-	})
+	tests := []struct {
+		name string
+		src  any
+		dst  any
+		exp  any
+	}{
+		{
+			name: `[]string->[]any{*big.Int,int,float64}`,
+			src:  []string{"1", "2", "3"},
+			dst:  ptr([]any{new(big.Int), 0, 0.0}),
+			exp:  []any{big.NewInt(1), 2, 3.0},
+		},
+		{
+			name: `[]any->[]any{*big.Int,int,float64}`,
+			src:  []any{"1", "2", "3"},
+			dst:  ptr([]any{new(big.Int), 0, 0.0}),
+			exp:  []any{big.NewInt(1), 2, 3.0},
+		},
+		{
+			name: `[2]string->[2]any{*big.Int,time.Time}`,
+			src:  [2]string{"1", "1970-01-01T00:00:05Z"},
+			dst:  ptr([2]any{new(big.Int), time.Time{}}),
+			exp:  [2]any{big.NewInt(1), time.Unix(5, 0).UTC()},
+		},
+		{
+			name: `[]string->[]any{float64}#new-elements-have-no-type`,
+			src:  []string{"1", "2"},
+			dst:  ptr([]any{0.0}),
+			exp:  []any{1.0, "2"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, Map(tt.src, tt.dst))
+			assert.Equal(t, exp(tt.exp), dst(tt.dst))
+		})
+	}
+}
 
-	t.Run("destination types are used for any to any mapping", func(t *testing.T) {
-		d := []any{new(big.Int), 0, 0.0}
-		require.NoError(t, Map([]any{"1", "2", "3"}, &d))
-		assert.Equal(t, []any{big.NewInt(1), 2, 3.0}, d)
-	})
+func TestNilValues(t *testing.T) {
+	type (
+		srcPtr  struct{ A *int }
+		srcAny  struct{ A any }
+		dstInt  struct{ A int }
+		dstText struct{ A string }
+	)
 
-	t.Run("destination types are used for arrays", func(t *testing.T) {
-		d := [2]any{new(big.Int), time.Time{}}
-		require.NoError(t, Map([2]string{"1", "1970-01-01T00:00:05Z"}, &d))
-		assert.Equal(t, [2]any{big.NewInt(1), time.Unix(5, 0).UTC()}, d)
-	})
+	tests := []struct {
+		name string
+		src  any
+		dst  any
+		exp  any
+	}{
+		// A nil value in the source sets the destination to its zero value.
+		{name: `struct{*int:nil}->struct#same-type`, src: srcPtr{}, dst: ptr(srcPtr{A: new(int)}), exp: srcPtr{}},
+		{name: `struct{*int:nil}->struct{int}`, src: srcPtr{}, dst: ptr(dstInt{A: 9}), exp: dstInt{}},
+		{name: `struct{any:nil}->map[string]any`, src: srcAny{}, dst: ptr(map[string]any{"A": 9}), exp: map[string]any{"A": nil}},
+		{name: `map[string]any{nil}->map[string]string`, src: map[string]any{"a": nil}, dst: ptr(map[string]string{"a": "old"}), exp: map[string]string{"a": ""}},
+		{name: `map[string]any{nil}->struct{string}`, src: map[string]any{"A": nil}, dst: ptr(dstText{A: "old"}), exp: dstText{}},
+		{name: `[]any{nil}->[]string`, src: []any{nil}, dst: ptr([]string{"old"}), exp: []string{""}},
 
-	t.Run("new elements have no type", func(t *testing.T) {
-		d := []any{0.0}
-		require.NoError(t, Map([]string{"1", "2"}, &d))
-		assert.Equal(t, []any{1.0, "2"}, d)
-	})
+		// A source that has no value at all leaves the destination unchanged.
+		{name: `map#without-the-key->struct`, src: map[string]any{"B": "x"}, dst: ptr(dstText{A: "old"}), exp: dstText{A: "old"}},
+		{name: `struct#without-the-field->struct`, src: struct{ B string }{"x"}, dst: ptr(dstText{A: "old"}), exp: dstText{A: "old"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, Map(tt.src, tt.dst))
+			assert.Equal(t, exp(tt.exp), dst(tt.dst))
+		})
+	}
+}
+
+func TestNilSlicesAndMaps(t *testing.T) {
+	type (
+		srcSlice struct{ A []string }
+		dstSlice struct{ A []int }
+		srcMap   struct{ A map[string]string }
+		dstMap   struct{ A map[string]int }
+	)
+
+	tests := []struct {
+		name string
+		src  any
+		dst  any
+		exp  any
+	}{
+		// A nil slice or a nil map in the source gives a nil destination.
+		{name: `struct{[]string:nil}->struct{[]int}`, src: srcSlice{}, dst: ptr(dstSlice{A: []int{1, 2, 3}}), exp: dstSlice{}},
+		{name: `struct{[]string:nil}->struct#same-type`, src: srcSlice{}, dst: ptr(srcSlice{A: []string{"x"}}), exp: srcSlice{}},
+		{name: `struct{map:nil}->struct{map[string]int}`, src: srcMap{}, dst: ptr(dstMap{A: map[string]int{"x": 1}}), exp: dstMap{}},
+		{name: `struct{map:nil}->struct#same-type`, src: srcMap{}, dst: ptr(srcMap{A: map[string]string{"x": "1"}}), exp: srcMap{}},
+		{name: `[]string(nil)->[]int#top-level`, src: []string(nil), dst: ptr([]int{1, 2}), exp: []int(nil)},
+		{name: `map[string]string(nil)->map[string]int#top-level`, src: map[string]string(nil), dst: ptr(map[string]int{"a": 1}), exp: map[string]int(nil)},
+
+		// An empty collection is a different value than a nil collection.
+		{name: `struct{[]string{}}->struct{[]int}#empty-is-not-nil`, src: srcSlice{A: []string{}}, dst: ptr(dstSlice{A: []int{1, 2, 3}}), exp: dstSlice{A: []int{}}},
+		{name: `struct{map{}}->struct{map[string]int}#empty-keeps-destination`, src: srcMap{A: map[string]string{}}, dst: ptr(dstMap{A: map[string]int{"x": 1}}), exp: dstMap{A: map[string]int{"x": 1}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, Map(tt.src, tt.dst))
+			assert.Equal(t, exp(tt.exp), dst(tt.dst))
+		})
+	}
 }
 
 func TestStrictTypes(t *testing.T) {
