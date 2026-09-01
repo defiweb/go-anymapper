@@ -124,7 +124,7 @@ type Mapper struct {
 	Hooks Hooks
 
 	// Cache:
-	cacheMu  sync.Mutex
+	cacheMu  sync.RWMutex
 	cacheMap map[typePair]*typeMapper
 }
 
@@ -233,6 +233,15 @@ func (m *Mapper) MapReflContext(ctx *Context, src, dst reflect.Value) error {
 	return m.mapperFor(ctx, srcVal.Type(), dstVal.Type()).mapRefl(m, ctx, srcVal, dstVal)
 }
 
+// ClearCache removes all cached type mappers. Call this after changing
+// Mapper.Hooks or Mapper.Mappers so that the new configuration takes effect
+// for type pairs that were already mapped.
+func (m *Mapper) ClearCache() {
+	m.cacheMu.Lock()
+	m.cacheMap = make(map[typePair]*typeMapper, 0)
+	m.cacheMu.Unlock()
+}
+
 // Copy creates a copy of the current Mapper with the same configuration.
 func (m *Mapper) Copy() *Mapper {
 	cpy := &Mapper{
@@ -258,20 +267,30 @@ func (m *Mapper) Copy() *Mapper {
 
 // mapperFor returns the typeMapper that can map values of the given types.
 // If mapping is not possible, the returned typeMapper has a nil MapFunc.
-func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) (tm *typeMapper) {
+func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) *typeMapper {
+	key := typePair{src: src, dst: dst}
 	if !ctx.DisableCache {
-		m.cacheMu.Lock()
-		if v, ok := m.cacheMap[typePair{src: src, dst: dst}]; ok {
-			m.cacheMu.Unlock()
+		m.cacheMu.RLock()
+		v, ok := m.cacheMap[key]
+		m.cacheMu.RUnlock()
+		if ok {
 			return v
 		}
-		defer func() {
-			m.cacheMap[typePair{src: src, dst: dst}] = tm
-			m.cacheMu.Unlock()
-		}()
 	}
+	tm := m.buildMapper(src, dst)
+	if !ctx.DisableCache {
+		m.cacheMu.Lock()
+		if _, ok := m.cacheMap[key]; !ok {
+			m.cacheMap[key] = tm
+		}
+		m.cacheMu.Unlock()
+	}
+	return tm
+}
 
-	tm = &typeMapper{
+// buildMapper constructs a typeMapper for the given src and dst types.
+func (m *Mapper) buildMapper(src, dst reflect.Type) *typeMapper {
+	tm := &typeMapper{
 		SrcType: src,
 		DstType: dst,
 	}
@@ -280,7 +299,7 @@ func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) (tm *typeMapper)
 	if m.Hooks.MapFuncHook != nil {
 		if fn := m.Hooks.MapFuncHook(m, src, dst); fn != nil {
 			tm.MapFunc = fn
-			return
+			return tm
 		}
 	}
 
@@ -298,7 +317,7 @@ func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) (tm *typeMapper)
 	// using reflect.Set.
 	if sameTypes && isSrcSimple {
 		tm.MapFunc = mapDirect
-		return
+		return tm
 	}
 
 	// Try to find a mapper using mapper providers. It looks for providers
@@ -313,7 +332,7 @@ func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) (tm *typeMapper)
 	if hasSrcMapper {
 		tm.MapFunc = srcMapper(m, src, dst)
 		if tm.MapFunc != nil {
-			return
+			return tm
 		}
 	}
 	if !sameTypes && !isDstSimple {
@@ -322,11 +341,11 @@ func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) (tm *typeMapper)
 	if hasDstMapper {
 		tm.MapFunc = dstMapper(m, src, dst)
 		if tm.MapFunc != nil {
-			return
+			return tm
 		}
 	}
 	if hasSrcMapper || hasDstMapper {
-		return
+		return tm
 	}
 
 	// If destination type is an any interface, map the value directly using
@@ -334,12 +353,12 @@ func (m *Mapper) mapperFor(ctx *Context, src, dst reflect.Type) (tm *typeMapper)
 	// to the same type as the value in the interface.
 	if dst == anyTy {
 		tm.MapFunc = mapAny
-		return
+		return tm
 	}
 
 	// If there are no custom mappers and hooks, use the default mappers.
 	tm.MapFunc = builtInTypesMapper(m, src, dst)
-	return
+	return tm
 }
 
 // srcValue unpacks values from pointers and interfaces until it reaches a
