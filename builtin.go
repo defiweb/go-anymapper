@@ -339,13 +339,17 @@ func mapFloatToInt(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
 	if ctx.StrictTypes {
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
-	if src.Float() > math.MaxInt64 || src.Float() < math.MinInt64 {
+	f := src.Float()
+	if math.IsNaN(f) {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "NaN")
+	}
+	if f >= math.MaxInt64+1 || f < math.MinInt64 {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
 	}
-	if dst.OverflowInt(int64(src.Float())) {
+	if dst.OverflowInt(int64(f)) {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
 	}
-	dst.SetInt(int64(src.Float()))
+	dst.SetInt(int64(f))
 	return nil
 }
 
@@ -353,13 +357,17 @@ func mapFloatToUint(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
 	if ctx.StrictTypes {
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
-	if src.Float() < 0 || src.Float() > math.MaxUint64 {
+	f := src.Float()
+	if math.IsNaN(f) {
+		return NewInvalidMappingError(src.Type(), dst.Type(), "NaN")
+	}
+	if f < 0 || f >= math.MaxUint64+1 {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
 	}
-	if dst.OverflowUint(uint64(src.Float())) {
+	if dst.OverflowUint(uint64(f)) {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "overflow")
 	}
-	dst.SetUint(uint64(src.Float()))
+	dst.SetUint(uint64(f))
 	return nil
 }
 

@@ -84,8 +84,10 @@ func TestBuiltInTypes(t *testing.T) {
 		// int <-> float
 		{name: `int(1)->float64`, src: 1, dst: new(float64), exp: float64(1)},
 		{name: `float64(1)->int`, src: float64(1), dst: new(int), exp: 1},
-		{name: `float64(math.MathFloat64)->int`, src: float64(math.MaxFloat64), dst: new(int), err: true}, // error
-		{name: `float64(257)->int8`, src: float64(257), dst: new(int8), err: true},                        // error
+		{name: `float64(math.MathFloat64)->int`, src: float64(math.MaxFloat64), dst: new(int), err: true},                // error
+		{name: `float64(257)->int8`, src: float64(257), dst: new(int8), err: true},                                       // error
+		{name: `float64(NaN)->int64`, src: math.NaN(), dst: new(int64), err: true},                                       // error: NaN
+		{name: `float64(9223372036854775808.0)->int64`, src: float64(9223372036854775808.0), dst: new(int64), err: true}, // error: boundary overflow
 
 		// int <-> string
 		{name: `int(1)->string`, src: 1, dst: new(string), exp: "1"},
@@ -142,8 +144,10 @@ func TestBuiltInTypes(t *testing.T) {
 		// uint <-> float
 		{name: `uint(1)->float64`, src: uint(1), dst: new(float64), exp: float64(1)},
 		{name: `float64(1)->uint`, src: float64(1), dst: new(uint), exp: uint(1)},
-		{name: `float64(math.MaxFloat64)->uint`, src: float64(math.MaxFloat64), dst: new(uint), err: true}, // error
-		{name: `float64(257)->uint8`, src: float64(257), dst: new(uint8), err: true},                       // error
+		{name: `float64(math.MaxFloat64)->uint`, src: float64(math.MaxFloat64), dst: new(uint), err: true},                   // error
+		{name: `float64(257)->uint8`, src: float64(257), dst: new(uint8), err: true},                                         // error
+		{name: `float64(NaN)->uint64`, src: math.NaN(), dst: new(uint64), err: true},                                         // error: NaN
+		{name: `float64(18446744073709551616.0)->uint64`, src: float64(18446744073709551616.0), dst: new(uint64), err: true}, // error: boundary overflow
 
 		// uint <-> string
 		{name: `uint(1)->string`, src: uint(1), dst: new(string), exp: "1"},
