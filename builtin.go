@@ -160,7 +160,7 @@ func builtInTypesMapper(_ *Mapper, src, dst reflect.Type) MapFunc {
 }
 
 func mapBoolToBool(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
-	if ctx.StrictTypes {
+	if ctx.StrictTypes && src.Type() != dst.Type() {
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
 	dst.SetBool(src.Bool())
@@ -458,7 +458,7 @@ func mapStringToFloat(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
 }
 
 func mapStringToString(_ *Mapper, ctx *Context, src, dst reflect.Value) error {
-	if ctx.StrictTypes {
+	if ctx.StrictTypes && src.Type() != dst.Type() {
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
 	dst.SetString(src.String())
@@ -949,7 +949,11 @@ func numberToBytes(ctx *Context, src, dst reflect.Value) error {
 
 // numberFromBytes converts a byte slice to an int or uint using binary.Read.
 func numberFromBytes(ctx *Context, src []byte, dst reflect.Value) error {
-	if len(src) != int(dst.Type().Size()) {
+	size := int(dst.Type().Size())
+	if dst.Kind() == reflect.Int || dst.Kind() == reflect.Uint {
+		size = 8
+	}
+	if len(src) != size {
 		return NewInvalidMappingError(reflect.TypeOf(src), dst.Type(), "invalid byte slice length")
 	}
 	switch dst.Kind() {

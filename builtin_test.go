@@ -538,16 +538,17 @@ func TestStrictTypes(t *testing.T) {
 		err  bool
 	}{
 		{name: `bool->bool`, src: true, dst: new(bool), exp: true},
-		{name: `bool->int`, src: true, dst: new(int), err: true},            // error
-		{name: `bool->uint`, src: true, dst: new(uint), err: true},          // error
-		{name: `bool->float64`, src: true, dst: new(float64), err: true},    // error
-		{name: `bool->string`, src: true, dst: new(string), err: true},      // error
-		{name: `bool->[]byte`, src: true, dst: new([]byte), err: true},      // error
-		{name: `bool->[1]byte`, src: true, dst: new([1]byte), err: true},    // error
-		{name: `bool->map`, src: true, dst: new(map[int]string), err: true}, // error
-		{name: `bool->struct`, src: true, dst: new(struct{}), err: true},    // error
-		{name: `bool-myBool`, src: true, dst: new(myBool), err: true},       // error
-		{name: `int->bool`, src: 1, dst: new(bool), err: true},              // error
+		{name: `bool->int`, src: true, dst: new(int), err: true},                         // error
+		{name: `bool->uint`, src: true, dst: new(uint), err: true},                       // error
+		{name: `bool->float64`, src: true, dst: new(float64), err: true},                 // error
+		{name: `bool->string`, src: true, dst: new(string), err: true},                   // error
+		{name: `bool->[]byte`, src: true, dst: new([]byte), err: true},                   // error
+		{name: `bool->[1]byte`, src: true, dst: new([1]byte), err: true},                 // error
+		{name: `bool->map`, src: true, dst: new(map[int]string), err: true},              // error
+		{name: `bool->struct`, src: true, dst: new(struct{}), err: true},                 // error
+		{name: `bool-myBool`, src: true, dst: new(myBool), err: true},                    // error
+		{name: `myBool->myBool`, src: myBool(true), dst: new(myBool), exp: myBool(true)}, // same named type: must succeed
+		{name: `int->bool`, src: 1, dst: new(bool), err: true},                           // error
 		{name: `int->int`, src: 1, dst: new(int), exp: 1},
 		{name: `int->int8`, src: 1, dst: new(int8), err: true},          // error
 		{name: `int->uint`, src: 1, dst: new(uint), err: true},          // error
@@ -585,16 +586,17 @@ func TestStrictTypes(t *testing.T) {
 		{name: `string->uint`, src: "1", dst: new(uint), err: true},                  // error
 		{name: `string->float64`, src: "1", dst: new(float64), err: true},            // error
 		{name: `string->string`, src: "1", dst: new(string), exp: "1"},
-		{name: `string->[]byte`, src: "1", dst: new([]byte), err: true},           // error
-		{name: `string->[1]byte`, src: "1", dst: new([1]byte), err: true},         // error
-		{name: `string->map`, src: "1", dst: new(map[int]string), err: true},      // error
-		{name: `string->struct`, src: "1", dst: new(struct{}), err: true},         // error
-		{name: `string-myString`, src: "1", dst: new(myString), err: true},        // error
-		{name: `[]byte->bool`, src: []byte("1"), dst: new(bool), err: true},       // error
-		{name: `[]byte->int`, src: []byte("1"), dst: new(int), err: true},         // error
-		{name: `[]byte->uint`, src: []byte("1"), dst: new(uint), err: true},       // error
-		{name: `[]byte->float64`, src: []byte("1"), dst: new(float64), err: true}, // error
-		{name: `[]byte->string`, src: []byte("1"), dst: new(string), err: true},   // error
+		{name: `string->[]byte`, src: "1", dst: new([]byte), err: true},                          // error
+		{name: `string->[1]byte`, src: "1", dst: new([1]byte), err: true},                        // error
+		{name: `string->map`, src: "1", dst: new(map[int]string), err: true},                     // error
+		{name: `string->struct`, src: "1", dst: new(struct{}), err: true},                        // error
+		{name: `string-myString`, src: "1", dst: new(myString), err: true},                       // error
+		{name: `myString->myString`, src: myString("x"), dst: new(myString), exp: myString("x")}, // same named type: must succeed
+		{name: `[]byte->bool`, src: []byte("1"), dst: new(bool), err: true},                      // error
+		{name: `[]byte->int`, src: []byte("1"), dst: new(int), err: true},                        // error
+		{name: `[]byte->uint`, src: []byte("1"), dst: new(uint), err: true},                      // error
+		{name: `[]byte->float64`, src: []byte("1"), dst: new(float64), err: true},                // error
+		{name: `[]byte->string`, src: []byte("1"), dst: new(string), err: true},                  // error
 		{name: `[]byte->[]byte`, src: []byte("1"), dst: new([]byte), exp: []byte("1")},
 		{name: `[]byte->[]int`, src: []byte("1"), dst: new([]int), err: true},        // error
 		{name: `[]byte->[1]byte`, src: []byte("1"), dst: new([1]byte), err: true},    // error
@@ -761,6 +763,28 @@ func TestTags(t *testing.T) {
 		assert.Equal(t, Str{
 			Foo: 1,
 		}, dst)
+	})
+	t.Run("tag-with-option", func(t *testing.T) {
+		type Src struct {
+			Foo int `map:"foo,omitempty"`
+		}
+		type Dst struct {
+			Foo int `map:"foo"`
+		}
+		var dst Dst
+		err := Map(Src{Foo: 42}, &dst)
+		assert.NoError(t, err)
+		assert.Equal(t, Dst{Foo: 42}, dst)
+	})
+	t.Run("empty-tag-skipped", func(t *testing.T) {
+		type Src struct {
+			Foo int `map:""`
+			Bar int `map:"bar"`
+		}
+		var dst map[string]int
+		err := Map(Src{Foo: 1, Bar: 2}, &dst)
+		assert.NoError(t, err)
+		assert.Equal(t, map[string]int{"bar": 2}, dst)
 	})
 }
 

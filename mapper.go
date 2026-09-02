@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -458,6 +459,12 @@ func (m *Mapper) parseTag(ctx *Context, f reflect.StructField) (fields string, s
 		}
 	}
 	if tag == "-" {
+		return "", true
+	}
+	if i := strings.IndexByte(tag, ','); i >= 0 {
+		tag = tag[:i]
+	}
+	if tag == "" {
 		return "", true
 	}
 	return tag, false

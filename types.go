@@ -319,7 +319,7 @@ func mapFromTimeViaInt64(m *Mapper, ctx *Context, src, dst reflect.Value) error 
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
 	aux := src.Interface().(time.Time).Unix()
-	if err := m.MapRefl(reflect.ValueOf(aux), dst); err != nil {
+	if err := m.MapReflContext(ctx, reflect.ValueOf(aux), dst); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
 	return nil
@@ -330,7 +330,7 @@ func mapToTimeViaInt64(m *Mapper, ctx *Context, src, dst reflect.Value) error {
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
 	var aux int64
-	if err := m.MapRefl(src, reflect.ValueOf(&aux)); err != nil {
+	if err := m.MapReflContext(ctx, src, reflect.ValueOf(&aux)); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
 	dst.Set(reflect.ValueOf(time.Unix(aux, 0).UTC()))
@@ -606,10 +606,10 @@ func mapBigRatToSliceOrArray(m *Mapper, ctx *Context, src, dst reflect.Value) er
 		return NewInvalidMappingError(src.Type(), dst.Type(), "array must have length 2")
 	}
 	v := src.Addr().Interface().(*big.Rat)
-	if err := m.MapRefl(reflect.ValueOf(v.Num()), dst.Index(0)); err != nil {
+	if err := m.MapReflContext(ctx, reflect.ValueOf(v.Num()), dst.Index(0)); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
-	if err := m.MapRefl(reflect.ValueOf(v.Denom()), dst.Index(1)); err != nil {
+	if err := m.MapReflContext(ctx, reflect.ValueOf(v.Denom()), dst.Index(1)); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
 	return nil
@@ -635,10 +635,10 @@ func mapSliceOrArrayToBigRat(m *Mapper, ctx *Context, src, dst reflect.Value) er
 		return NewInvalidMappingError(src.Type(), dst.Type(), "array must have length 2")
 	}
 	var num, den big.Int
-	if err := m.MapRefl(src.Index(0), reflect.ValueOf(&num).Elem()); err != nil {
+	if err := m.MapReflContext(ctx, src.Index(0), reflect.ValueOf(&num).Elem()); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
-	if err := m.MapRefl(src.Index(1), reflect.ValueOf(&den).Elem()); err != nil {
+	if err := m.MapReflContext(ctx, src.Index(1), reflect.ValueOf(&den).Elem()); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
 	dst.Set(reflect.ValueOf(new(big.Rat).SetFrac(&num, &den)).Elem())
@@ -650,7 +650,7 @@ func mapFromBigRatViaBigFloat(m *Mapper, ctx *Context, src, dst reflect.Value) e
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
 	aux := new(big.Float).SetRat(src.Addr().Interface().(*big.Rat))
-	if err := m.MapRefl(reflect.ValueOf(aux), dst); err != nil {
+	if err := m.MapReflContext(ctx, reflect.ValueOf(aux), dst); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
 	return nil
@@ -661,7 +661,7 @@ func mapToBigRatViaBigFloat(m *Mapper, ctx *Context, src, dst reflect.Value) err
 		return NewStrictMappingError(src.Type(), dst.Type())
 	}
 	aux := reflect.New(bigFloatTy).Elem()
-	if err := m.MapRefl(src, aux); err != nil {
+	if err := m.MapReflContext(ctx, src, aux); err != nil {
 		return NewInvalidMappingError(src.Type(), dst.Type(), "")
 	}
 	rat, _ := aux.Addr().Interface().(*big.Float).Rat(nil)
