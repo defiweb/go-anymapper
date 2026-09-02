@@ -82,7 +82,7 @@ The mapper uses the rules below. The types in the table refer to the type kind, 
 | `array` ⇔ `array`                                     | Maps every element, if the lengths are the same.                                                   |
 | `map` ⇔ `map`                                         | Maps every key and every value.                                                                    |
 | `struct` ⇔ `struct`                                   | Maps every exported field. See [structures](#structures).                                          |
-| `struct` ⇔ `map[string]X`                             | Uses the field names as map keys. See [structures](#structures).                                   |
+| `struct` ⇔ `map[string]X`                             | Uses the field names as map keys.                                                                  |
 
 The mapping fails if the destination type is not large enough to hold the source value. For example, mapping `int64` to
 `int8` may fail, because `int64` can store values larger than `int8`.
@@ -355,7 +355,17 @@ func main() {
 
 ## Benchmark
 
-The benchmark below compares `go-anymapper` with the `mapstructure` package.
+Measured on Apple M1 Max, Go 1.18, `-benchtime=500ms -count=3`.
+
+| Case                                     | go-anymapper                  | mapstructure                    | Result           |
+|------------------------------------------|-------------------------------|---------------------------------|------------------|
+| `map` ⇒ `struct`                         | 1079 ns, 408 B, 16 allocs     | 2686 ns, 3580 B, 64 allocs      | **2.5x faster**  |
+| `struct` ⇒ `map`                         | 969 ns, 584 B, 14 allocs      | 546 ns, 672 B, 16 allocs        | 1.8x slower      |
+| `[]string` ⇒ `[]int`                     | 371 ns, 160 B, 5 allocs       | 646 ns, 377 B, 22 allocs        | **1.7x faster**  |
+| `string` ⇒ `int`                         | 60 ns, 8 B, 1 alloc           | 60 ns, 96 B, 3 allocs           | even             |
+
+<details>
+<summary>Benchmark source</summary>
 
 ```go
 package main
@@ -367,74 +377,111 @@ import (
 	"github.com/mitchellh/mapstructure"
 )
 
-func Benchmark(b *testing.B) {
-	type Object struct {
-		A string
-		B int
-		C []string
-		D []any
-		E map[string]string
+type Object struct {
+	A string
+	B int
+	C []string
+	D []any
+	E map[string]string
+}
+
+// weakDecode enables the type conversions that mapstructure does not do by
+// default. go-anymapper does these conversions without configuration.
+func weakDecode(input, result any) error {
+	dec, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		WeaklyTypedInput: true,
+		Result:           result,
+	})
+	if err != nil {
+		return err
 	}
-	b.Run("anymapper/map-struct", func(b *testing.B) {
+	return dec.Decode(input)
+}
+
+func Benchmark(b *testing.B) {
+	object := map[string]any{
+		"A": "a",
+		"B": 1,
+		"C": []string{"a", "b", "c"},
+		"D": []any{1, "2", 3.0},
+		"E": map[string]string{"a": "a", "b": "b", "c": "c"},
+	}
+	list := []string{"1", "2", "3", "4", "5", "6", "7", "8"}
+
+	b.Run("map-struct/anymapper", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			input := map[string]interface{}{
-				"A": "a",
-				"B": 1,
-				"C": []string{"a", "b", "c"},
-				"D": []any{1, "2", 3.0},
-				"E": map[string]string{"a": "a", "b": "b", "c": "c"},
-			}
 			var result Object
-			err := anymapper.Map(input, &result)
-			if err != nil {
+			if err := anymapper.Map(object, &result); err != nil {
 				b.Fatal(err)
 			}
 		}
 	})
-	b.Run("anymapper/struct-map", func(b *testing.B) {
+	b.Run("map-struct/mapstructure", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			input := Object{
-				A: "a",
-				B: 1,
-				C: []string{"a", "b", "c"},
-				D: []any{1, "2", 3.0},
-				E: map[string]string{"a": "a", "b": "b", "c": "c"},
-			}
-			var result map[string]any
-			err := anymapper.Map(input, &result)
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	b.Run("mapstructure/map-struct", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			input := map[string]interface{}{
-				"A": "a",
-				"B": 1,
-				"C": []string{"a", "b", "c"},
-				"D": []any{1, "2", 3.0},
-				"E": map[string]string{"a": "a", "b": "b", "c": "c"},
-			}
 			var result Object
-			err := mapstructure.Decode(input, &result)
-			if err != nil {
+			if err := mapstructure.Decode(object, &result); err != nil {
 				b.Fatal(err)
 			}
 		}
 	})
-	b.Run("mapstructure/struct-map", func(b *testing.B) {
+	b.Run("struct-map/anymapper", func(b *testing.B) {
+		input := Object{
+			A: "a",
+			B: 1,
+			C: []string{"a", "b", "c"},
+			D: []any{1, "2", 3.0},
+			E: map[string]string{"a": "a", "b": "b", "c": "c"},
+		}
 		for i := 0; i < b.N; i++ {
-			input := Object{
-				A: "a",
-				B: 1,
-				C: []string{"a", "b", "c"},
-				D: []any{1, "2", 3.0},
-				E: map[string]string{"a": "a", "b": "b", "c": "c"},
-			}
 			var result map[string]any
-			err := mapstructure.Decode(input, &result)
-			if err != nil {
+			if err := anymapper.Map(input, &result); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("struct-map/mapstructure", func(b *testing.B) {
+		input := Object{
+			A: "a",
+			B: 1,
+			C: []string{"a", "b", "c"},
+			D: []any{1, "2", 3.0},
+			E: map[string]string{"a": "a", "b": "b", "c": "c"},
+		}
+		for i := 0; i < b.N; i++ {
+			var result map[string]any
+			if err := mapstructure.Decode(input, &result); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("slice/anymapper", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			var result []int
+			if err := anymapper.Map(list, &result); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("slice/mapstructure", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			var result []int
+			if err := weakDecode(list, &result); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("scalar/anymapper", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			var result int
+			if err := anymapper.Map("42", &result); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("scalar/mapstructure", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			var result int
+			if err := weakDecode("42", &result); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -442,14 +489,7 @@ func Benchmark(b *testing.B) {
 }
 ```
 
-Results:
-
-```
-Benchmark/anymapper/map-struct         	  972992	      1174 ns/op
-Benchmark/anymapper/struct-map         	  903348	      1311 ns/op
-Benchmark/mapstructure/map-struct      	  339668	      3501 ns/op
-Benchmark/mapstructure/struct-map      	 1354458	      889.5 ns/op
-```
+</details>
 
 ## Documentation
 
