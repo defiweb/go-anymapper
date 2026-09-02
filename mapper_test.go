@@ -260,10 +260,6 @@ func ptr(v any) any {
 	return r.Addr().Interface()
 }
 
-func ptrType[T any](v T) *T {
-	return &v
-}
-
 func exp(v any) any {
 	r := reflect.ValueOf(v)
 	for r.Kind() == reflect.Interface {
